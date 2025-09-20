@@ -7,6 +7,7 @@ python-jose[cryptography]==3.3.0
 SQLAlchemy==2.0.36
 sqlmodel==0.0.22
 psycopg[binary]==3.2.3
+psycopg2-binary==2.9.10
 supabase==2.10.0
 scikit-learn==1.5.2
 google-generativeai==0.8.3

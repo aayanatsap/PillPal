@@ -3,6 +3,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -13,8 +17,10 @@ engine = create_engine(DATABASE_URL) if DATABASE_URL else None
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) if engine else None
 Base = declarative_base()
 
-# Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+# Supabase client (only create if credentials exist)
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 def get_db():
     """Dependency to get database session"""
