@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -7,6 +7,8 @@ import os
 from .security import verify_jwt
 from .database import get_db, supabase
 from .models import User, Medication, MedTime, Dose, DoseStatus, UserRole
+from .gemini_service import gemini_service
+from .twilio_service import twilio_service
 from sqlalchemy.orm import Session
 
 app = FastAPI(title="PillPal API", version="0.1.0")
@@ -83,15 +85,82 @@ async def healthz() -> dict:
 
 
 @app.post("/api/v1/intent", response_model=IntentResponse)
-async def parse_intent(body: IntentRequest, _claims: dict = Depends(verify_jwt)):
-    # TODO: integrate Gemini 1.5 Flash
-    return IntentResponse(intent="unknown", data={"echo": body.query})
+async def parse_intent(body: IntentRequest, claims: dict = Depends(verify_jwt)):
+    """Parse voice/text intent using Gemini AI"""
+    user_id = await get_or_create_user(claims)
+    
+    # Use Gemini to parse intent
+    result = await gemini_service.parse_voice_intent(body.query)
+    
+    # Log the intent parsing event
+    intent_data = {
+        "user_id": user_id,
+        "raw_input_type": "text_query",
+        "raw_input_ref": body.query,
+        "gemini_model": "gemini-1.5-flash",
+        "gemini_output": result
+    }
+    
+    try:
+        supabase.table("intake_events").insert(intent_data).execute()
+    except Exception:
+        pass  # Don't fail the request if logging fails
+    
+    return IntentResponse(
+        intent=result.get("intent", "unknown"),
+        data={
+            "confidence": result.get("confidence", 0.0),
+            "entities": result.get("entities", {}),
+            "suggested_response": result.get("suggested_response", "I didn't understand that."),
+            "original_query": body.query
+        }
+    )
 
 
 @app.post("/api/v1/label-extract")
-async def label_extract(_claims: dict = Depends(verify_jwt)):
-    # TODO: receive image, call Gemini OCR, return parsed medication JSON
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented")
+async def label_extract(
+    file: UploadFile = File(...),
+    claims: dict = Depends(verify_jwt)
+):
+    """Extract medication info from prescription label image using Gemini Vision"""
+    user_id = await get_or_create_user(claims)
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    try:
+        # Read image data
+        image_data = await file.read()
+        
+        # Use Gemini to extract medication info
+        result = await gemini_service.extract_medication_from_label(image_data)
+        
+        # Log the extraction event
+        intake_data = {
+            "user_id": user_id,
+            "raw_input_type": "image_label",
+            "raw_input_ref": f"uploaded_file_{file.filename}",
+            "gemini_model": "gemini-1.5-flash",
+            "gemini_output": result
+        }
+        
+        try:
+            supabase.table("intake_events").insert(intake_data).execute()
+        except Exception:
+            pass  # Don't fail the request if logging fails
+        
+        return {
+            "success": True,
+            "medication_info": result,
+            "suggestions": {
+                "create_medication": result.get("confidence", 0) > 0.7,
+                "review_required": result.get("confidence", 0) < 0.8
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 
 @app.get("/api/v1/risk")
@@ -324,5 +393,134 @@ async def update_dose(
         notes=updated_dose["notes"],
         medication_name=med_name
     )
+
+
+# Alert endpoints
+@app.post("/api/v1/alerts/missed-dose")
+async def trigger_missed_dose_alert(
+    dose_id: str,
+    claims: dict = Depends(verify_jwt)
+):
+    """Trigger missed dose alert to caregivers"""
+    user_id = await get_or_create_user(claims)
+    
+    # Get dose details
+    dose_result = supabase.table("doses").select("""
+        id, scheduled_at, status, notes,
+        medications(name),
+        users(name)
+    """).eq("id", dose_id).eq("user_id", user_id).execute()
+    
+    if not dose_result.data:
+        raise HTTPException(status_code=404, detail="Dose not found")
+    
+    dose = dose_result.data[0]
+    
+    # Mark dose as missed if still pending
+    if dose["status"] == "pending":
+        supabase.table("doses").update({"status": "missed"}).eq("id", dose_id).execute()
+    
+    # Get caregivers for this patient
+    caregivers_result = supabase.table("caregiver_links").select("""
+        caregivers:caregiver_id(name, phone_enc)
+    """).eq("patient_id", user_id).execute()
+    
+    alerts_sent = []
+    
+    for link in caregivers_result.data:
+        caregiver = link["caregivers"]
+        if caregiver and caregiver.get("phone_enc"):
+            # Send SMS alert
+            sms_sid = await twilio_service.send_missed_dose_alert(
+                caregiver_phone=caregiver["phone_enc"],
+                patient_name=dose["users"]["name"],
+                medication_name=dose["medications"]["name"],
+                scheduled_time=dose["scheduled_at"]
+            )
+            
+            # Log alert
+            alert_data = {
+                "dose_id": dose_id,
+                "ack_by_user_id": caregiver.get("id"),
+                "meta": {"twilio_sid": sms_sid, "phone": caregiver["phone_enc"]}
+            }
+            
+            alert_result = supabase.table("alerts").insert(alert_data).execute()
+            alerts_sent.append(alert_result.data[0]["id"])
+    
+    return {
+        "success": True,
+        "dose_id": dose_id,
+        "alerts_sent": len(alerts_sent),
+        "alert_ids": alerts_sent
+    }
+
+
+@app.get("/api/v1/alerts/missed-doses")
+async def get_missed_doses(claims: dict = Depends(verify_jwt)):
+    """Get doses that are overdue and should trigger alerts"""
+    user_id = await get_or_create_user(claims)
+    
+    # Get doses that are past their scheduled time and still pending
+    missed_result = supabase.rpc("exec_sql", {
+        "sql": f"""
+        SELECT d.id, d.scheduled_at, d.status, m.name as medication_name,
+               e.grace_minutes
+        FROM doses d
+        JOIN medications m ON d.medication_id = m.id
+        LEFT JOIN escalation_rules e ON d.user_id = e.user_id
+        WHERE d.user_id = '{user_id}'
+          AND d.status = 'pending'
+          AND d.scheduled_at < NOW() - INTERVAL '1 minute' * COALESCE(e.grace_minutes, 10)
+        ORDER BY d.scheduled_at
+        """
+    }).execute()
+    
+    return {
+        "missed_doses": missed_result.data if missed_result.data else [],
+        "count": len(missed_result.data) if missed_result.data else 0
+    }
+
+
+@app.post("/api/v1/alerts/acknowledge/{alert_id}")
+async def acknowledge_alert(
+    alert_id: str,
+    claims: dict = Depends(verify_jwt)
+):
+    """Acknowledge an alert (caregiver confirms they saw it)"""
+    user_id = await get_or_create_user(claims)
+    
+    # Update alert with acknowledgment
+    result = supabase.table("alerts").update({
+        "ack_by_user_id": user_id,
+        "ack_at": datetime.now().isoformat()
+    }).eq("id", alert_id).execute()
+    
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    
+    return {"success": True, "acknowledged_at": datetime.now().isoformat()}
+
+
+@app.post("/api/v1/test/sms")
+async def test_sms(
+    phone: str,
+    claims: dict = Depends(verify_jwt)
+):
+    """Test SMS functionality"""
+    
+    # Send test message
+    sms_sid = await twilio_service.send_reminder_sms(
+        patient_phone=phone,
+        medication_name="Test Medication",
+        time_to_take="Now"
+    )
+    
+    return {
+        "success": bool(sms_sid),
+        "sms_sid": sms_sid,
+        "phone": phone,
+        "message": "Test SMS sent!" if sms_sid else "Failed to send SMS"
+    }
 
 
