@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+declare global {
+  interface Window {
+    SpeechRecognition?: typeof SpeechRecognition;
+    webkitSpeechRecognition?: typeof SpeechRecognition;
+  }
+}
+
 export type SpeechRecognitionStatus = 'idle' | 'listening' | 'error';
 
 export interface UseSpeechOptions {
@@ -24,8 +31,7 @@ export function useSpeech(options?: UseSpeechOptions): UseSpeechResult {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
-    const SpeechRecognitionCtor =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       return;
     }
@@ -61,7 +67,7 @@ export function useSpeech(options?: UseSpeechOptions): UseSpeechResult {
     try {
       recognitionRef.current?.start();
       setStatus('listening');
-    } catch (_err) {
+    } catch {
       setStatus('error');
     }
   }, []);
@@ -70,7 +76,7 @@ export function useSpeech(options?: UseSpeechOptions): UseSpeechResult {
     try {
       recognitionRef.current?.stop();
       setStatus('idle');
-    } catch (_err) {
+    } catch {
       setStatus('error');
     }
   }, []);
