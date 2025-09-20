@@ -6,7 +6,7 @@ from datetime import datetime, time
 import os
 from .security import verify_jwt
 from .database import get_db, supabase
-from .models import User, Medication, MedTime, Dose, DoseStatus
+from .models import User, Medication, MedTime, Dose, DoseStatus, UserRole
 from sqlalchemy.orm import Session
 
 app = FastAPI(title="PillPal API", version="0.1.0")
@@ -30,6 +30,17 @@ class IntentResponse(BaseModel):
     data: dict
 
 # Pydantic models for API
+class UserCreate(BaseModel):
+    name: str
+    role: UserRole
+
+class UserResponse(BaseModel):
+    id: str
+    auth0_sub: str
+    name: str
+    role: UserRole
+    created_at: datetime
+
 class MedicationCreate(BaseModel):
     name: str
     strength_text: Optional[str] = None
@@ -93,15 +104,75 @@ async def risk_for_user(_claims: dict = Depends(verify_jwt)):
 def get_current_user_id(claims: dict) -> str:
     return claims.get("sub", "")
 
+async def get_or_create_user(claims: dict) -> str:
+    """Get user ID, creating user if doesn't exist"""
+    auth0_sub = claims.get("sub", "")
+    name = claims.get("name", claims.get("nickname", "Unknown User"))
+    
+    # Check if user exists
+    result = supabase.table("users").select("id").eq("auth0_sub", auth0_sub).execute()
+    
+    if result.data:
+        return result.data[0]["id"]
+    
+    # Create new user (default to patient role)
+    user_data = {
+        "auth0_sub": auth0_sub,
+        "name": name,
+        "role": UserRole.PATIENT.value
+    }
+    
+    result = supabase.table("users").insert(user_data).execute()
+    return result.data[0]["id"]
+
+
+# User management endpoints
+@app.get("/api/v1/user/me", response_model=UserResponse)
+async def get_current_user(claims: dict = Depends(verify_jwt)):
+    user_id = await get_or_create_user(claims)
+    
+    result = supabase.table("users").select("*").eq("id", user_id).execute()
+    user = result.data[0]
+    
+    return UserResponse(
+        id=user["id"],
+        auth0_sub=user["auth0_sub"],
+        name=user["name"],
+        role=user["role"],
+        created_at=user["created_at"]
+    )
+
+@app.get("/api/v1/user/next-dose")
+async def get_next_dose(claims: dict = Depends(verify_jwt)):
+    user_id = await get_or_create_user(claims)
+    
+    # Use the view created in schema
+    result = supabase.rpc("exec_sql", {
+        "sql": f"SELECT * FROM v_next_dose WHERE user_id = '{user_id}'"
+    }).execute()
+    
+    if result.data and len(result.data) > 0:
+        dose_data = result.data[0]
+        # Get medication name
+        med_result = supabase.table("medications").select("name").eq("id", dose_data["medication_id"]).execute()
+        med_name = med_result.data[0]["name"] if med_result.data else "Unknown"
+        
+        return {
+            "dose_id": dose_data["dose_id"],
+            "medication_name": med_name,
+            "scheduled_at": dose_data["scheduled_at"]
+        }
+    
+    return {"message": "No pending doses"}
+
 
 # Medications endpoints
 @app.post("/api/v1/medications", response_model=MedicationResponse)
 async def create_medication(
     med: MedicationCreate,
-    claims: dict = Depends(verify_jwt),
-    db: Session = Depends(get_db)
+    claims: dict = Depends(verify_jwt)
 ):
-    user_id = get_current_user_id(claims)
+    user_id = await get_or_create_user(claims)
     
     # Use Supabase client for CRUD (simpler than SQLAlchemy for this hackathon)
     med_data = {
@@ -136,7 +207,7 @@ async def create_medication(
 
 @app.get("/api/v1/medications", response_model=List[MedicationResponse])
 async def get_medications(claims: dict = Depends(verify_jwt)):
-    user_id = get_current_user_id(claims)
+    user_id = await get_or_create_user(claims)
     
     # Get medications
     meds_result = supabase.table("medications").select("*").eq("user_id", user_id).execute()
@@ -166,13 +237,13 @@ async def create_dose(
     dose: DoseCreate,
     claims: dict = Depends(verify_jwt)
 ):
-    user_id = get_current_user_id(claims)
+    user_id = await get_or_create_user(claims)
     
     dose_data = {
         "user_id": user_id,
         "medication_id": dose.medication_id,
         "scheduled_at": dose.scheduled_at.isoformat(),
-        "status": DoseStatus.SCHEDULED.value,
+        "status": DoseStatus.PENDING.value,
         "notes": dose.notes
     }
     
@@ -196,7 +267,7 @@ async def create_dose(
 
 @app.get("/api/v1/doses", response_model=List[DoseResponse])
 async def get_doses(claims: dict = Depends(verify_jwt)):
-    user_id = get_current_user_id(claims)
+    user_id = await get_or_create_user(claims)
     
     # Get doses with medication names
     result = supabase.table("doses").select("""
@@ -225,7 +296,7 @@ async def update_dose(
     dose_update: DoseUpdate,
     claims: dict = Depends(verify_jwt)
 ):
-    user_id = get_current_user_id(claims)
+    user_id = await get_or_create_user(claims)
     
     update_data = {"status": dose_update.status.value}
     if dose_update.taken_at:
