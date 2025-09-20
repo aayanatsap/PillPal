@@ -4,13 +4,6 @@
 **/out/
 **/.vercel/
 
-# Env files
-.env
-.env.local
-.env.*.local
-*.env
-*.env.local
-
 # Python
 **/.venv/
 **/__pycache__/
