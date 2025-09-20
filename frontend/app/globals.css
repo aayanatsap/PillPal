@@ -1,0 +1,310 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Light theme - calming, accessible colors */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+/* Dark theme - premium dark colors from spec */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-heading);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    /* Smooth theme transition */
+    transition: background-color 0.3s cubic-bezier(0.32, 0, 0.67, 0), color 0.3s cubic-bezier(0.32, 0, 0.67, 0);
+  }
+}
+
+/* Motion system keyframes with premium feel */
+@keyframes breathGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(255, 215, 0, 0.1);
+  }
+}
+
+@keyframes listeningPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 16px rgba(255, 215, 0, 0.2);
+  }
+}
+
+@keyframes recognitionRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 24px rgba(255, 215, 0, 0);
+  }
+}
+
+@keyframes successWash {
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(0, 200, 150, 0.1);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes skipWash {
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(255, 75, 75, 0.1);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* Enhanced premium utility classes */
+@layer utilities {
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-sm border border-border/50 rounded-2xl shadow-lg;
+    /* Applied transition directly instead of using theme-transition class */
+    transition: background-color 0.3s cubic-bezier(0.32, 0, 0.67, 0), color 0.3s cubic-bezier(0.32, 0, 0.67, 0),
+      border-color 0.3s cubic-bezier(0.32, 0, 0.67, 0);
+  }
+
+  .glass-card:hover {
+    @apply shadow-xl motion-safe:-translate-y-1;
+  }
+
+  .btn-premium {
+    @apply inline-flex items-center justify-center rounded-xl text-sm font-medium;
+    @apply motion-safe:transition-all motion-safe:duration-150;
+    @apply motion-safe:hover:-translate-y-0.5 motion-safe:hover:shadow-lg;
+    @apply motion-safe:active:scale-98;
+    /* Applied transition directly instead of using theme-transition class */
+    transition: background-color 0.3s cubic-bezier(0.32, 0, 0.67, 0), color 0.3s cubic-bezier(0.32, 0, 0.67, 0),
+      border-color 0.3s cubic-bezier(0.32, 0, 0.67, 0);
+    transition-timing-function: var(--ease-enter);
+  }
+
+  .btn-premium:active {
+    transition-timing-function: var(--ease-exit);
+  }
+
+  .chip-premium {
+    @apply inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium;
+    @apply motion-safe:transition-all motion-safe:duration-150;
+    /* Applied transition directly instead of using theme-transition class */
+    transition: background-color 0.3s cubic-bezier(0.32, 0, 0.67, 0), color 0.3s cubic-bezier(0.32, 0, 0.67, 0),
+      border-color 0.3s cubic-bezier(0.32, 0, 0.67, 0);
+  }
+
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .duration-xs {
+    transition-duration: 120ms;
+  }
+  .duration-sm {
+    transition-duration: 180ms;
+  }
+  .duration-md {
+    transition-duration: 240ms;
+  }
+  .duration-lg {
+    transition-duration: 320ms;
+  }
+  .scale-98 {
+    transform: scale(0.98);
+  }
+}
+
+/* Light theme specific animations */
+.light {
+  --color-glow-primary: rgba(58, 110, 165, 0.2);
+  --color-glow-accent: rgba(74, 189, 172, 0.2);
+}
+
+.dark {
+  --color-glow-primary: rgba(255, 215, 0, 0.2);
+  --color-glow-accent: rgba(0, 200, 150, 0.2);
+}
+
+@keyframes breathGlowLight {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--color-glow-primary);
+  }
+  50% {
+    box-shadow: 0 0 0 12px var(--color-glow-primary);
+  }
+}
+
+/* Reduced motion handling */
+@media (prefers-reduced-motion: reduce) {
+  .motion-safe\:transition-all {
+    transition: opacity 0.15s ease-out;
+  }
+
+  .motion-safe\:hover\:-translate-y-0\.5:hover,
+  .motion-safe\:hover\:-translate-y-1:hover {
+    transform: none;
+  }
+
+  .motion-safe\:active\:scale-98:active {
+    transform: none;
+  }
+
+  @keyframes breathGlow {
+    0%,
+    100% {
+      box-shadow: none;
+    }
+  }
+
+  @keyframes breathGlowLight {
+    0%,
+    100% {
+      box-shadow: none;
+    }
+  }
+
+  @keyframes listeningPulse {
+    0%,
+    100% {
+      box-shadow: none;
+    }
+  }
+
+  @keyframes recognitionRipple {
+    0%,
+    100% {
+      box-shadow: none;
+    }
+  }
+}
