@@ -11,6 +11,7 @@ import { MotionCard } from "@/components/ui/motion-card"
 import { MotionButton } from "@/components/ui/motion-button"
 import { Navigation } from "@/components/navigation"
 import { PhotoUpload } from "@/components/photo-upload"
+import { createMedication, extractLabel } from "@/lib/api"
 import { useMotion } from "@/components/motion-provider"
 import { useToast } from "@/hooks/use-toast"
 
@@ -33,8 +34,15 @@ export default function NewMedicationPage() {
     setIsSubmitting(true)
 
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      const times = formData.times.filter(Boolean)
+      await createMedication({
+        name: formData.name,
+        strength_text: formData.dosage,
+        dose_text: '',
+        instructions: formData.instructions || undefined,
+        frequency_text: formData.frequency || undefined,
+        times,
+      })
 
       toast({
         title: "Medication added",
@@ -74,16 +82,47 @@ export default function NewMedicationPage() {
     }))
   }
 
-  const handlePhotoUpload = (imageUrl: string, parsedData: any) => {
-    setFormData((prev) => ({
-      ...prev,
-      imageUrl,
-      name: parsedData.name || prev.name,
-      dosage: parsedData.dosage || prev.dosage,
-      frequency: parsedData.frequency || prev.frequency,
-      times: parsedData.times || prev.times,
-      instructions: parsedData.instructions || prev.instructions,
-    }))
+  const handlePhotoUpload = async (imageUrl: string, _parsedData: any) => {
+    setFormData((prev) => ({ ...prev, imageUrl }))
+    try {
+      // The PhotoUpload component already sends the file through extractLabel(fd) internally.
+      // Here we only consume the returned structure if provided via _parsedData.
+      const parsedList = Array.isArray(_parsedData?.medications) ? _parsedData.medications : [_parsedData]
+      const first = parsedList && parsedList[0] ? parsedList[0] : {}
+      // Normalize frequency label for the select
+      const inferFrequency = (times: string[] | undefined, freqText: string | undefined): string => {
+        if (Array.isArray(times) && times.length) {
+          if (times.length === 1) return "Once daily"
+          if (times.length === 2) return "Twice daily"
+          if (times.length === 3) return "Three times daily"
+          if (times.length >= 4) return "Four times daily"
+        }
+        const t = (freqText || "").toLowerCase()
+        if (/once|od|q\.?d\.?|qd|daily|every\s*day|everyday|per\s*day|once\s*a\s*day/.test(t)) return "Once daily"
+        if (/twice|bid|2x|2\s*times|two\s*times|morning.*evening|evening.*morning/.test(t)) return "Twice daily"
+        if (/three|tid|tds|3x|3\s*times/.test(t)) return "Three times daily"
+        if (/four|qid|qds|4x|4\s*times/.test(t)) return "Four times daily"
+        return ""
+      }
+      const timesFromFrequency = (freq: string): string[] => {
+        const f = (freq || '').toLowerCase()
+        if (/once|od|q\.?d\.?|qd|daily|every\s*day|everyday|per\s*day|once\s*a\s*day/.test(f)) return ["09:00"]
+        if (/twice|bid|2x|2\s*times|two\s*times/.test(f)) return ["09:00", "21:00"]
+        if (/three|tid|tds|3x|3\s*times/.test(f)) return ["08:00", "14:00", "20:00"]
+        if (/four|qid|qds|4x|4\s*times/.test(f)) return ["06:00", "12:00", "18:00", "22:00"]
+        return []
+      }
+      const times: string[] = Array.isArray(first.times) && first.times.length ? first.times : timesFromFrequency(first.frequency_text || "")
+      const frequency = inferFrequency(times, first.frequency_text)
+      setFormData((prev) => ({
+        ...prev,
+        name: first.name || prev.name,
+        dosage: first.strength_text || prev.dosage,
+        frequency: frequency || prev.frequency,
+        times: times.length ? times : prev.times,
+        instructions: first.instructions || prev.instructions,
+      }))
+    } catch {}
   }
 
   const containerVariants = prefersReducedMotion
@@ -142,6 +181,7 @@ export default function NewMedicationPage() {
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Photo upload */}
                 <PhotoUpload onUpload={handlePhotoUpload} />
+                <p className="text-xs text-muted-foreground mt-2">If extraction fails, fill the form manually below.</p>
 
                 {/* Basic info */}
                 <div className="grid gap-4 md:grid-cols-2">

@@ -14,6 +14,7 @@ import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import { getUserMe, updateUserMe } from "@/lib/api"
 
 interface ToggleSwitchProps {
   checked: boolean
@@ -45,6 +46,7 @@ function ToggleSwitch({ checked, onChange, disabled = false }: ToggleSwitchProps
 }
 
 export default function SettingsPage() {
+  const [profile, setProfile] = useState<{ name: string } | null>(null)
   const [settings, setSettings] = useState({
     notifications: true,
     soundAlerts: true,
@@ -64,6 +66,7 @@ export default function SettingsPage() {
   const { toast } = useToast()
 
   useEffect(() => {
+    getUserMe().then((u) => setProfile({ name: u.name }))
     // Check if app is already installed
     if (window.matchMedia("(display-mode: standalone)").matches) {
       setIsInstalled(true)
@@ -279,10 +282,9 @@ export default function SettingsPage() {
                   <User className={cn("w-8 h-8", isDark ? "text-yellow-400" : "text-blue-600")} />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-heading text-lg font-semibold text-foreground">Sarah Johnson</h3>
-                  <p className="text-sm text-muted-foreground">sarah.johnson@email.com</p>
+                  <h3 className="font-heading text-lg font-semibold text-foreground">{profile?.name || "Unknown User"}</h3>
+                  <p className="text-sm text-muted-foreground">&nbsp;</p>
                   <div className="flex items-center space-x-2 mt-1">
-                    <p className="text-xs text-muted-foreground">Member since January 2024</p>
                     {isInstalled && (
                       <Badge variant="success" className="text-xs">
                         App Installed
@@ -290,7 +292,23 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-                <Button variant="outline" size="sm" className="btn-premium bg-transparent">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="btn-premium bg-transparent"
+                  onClick={async () => {
+                    const newName = prompt("Update your display name", profile?.name || "")
+                    if (newName && newName.trim()) {
+                      try {
+                        const u = await updateUserMe({ name: newName.trim() })
+                        setProfile({ name: u.name })
+                        window.location.reload()
+                      } catch (e: any) {
+                        alert(e?.message || "Failed to update name")
+                      }
+                    }
+                  }}
+                >
                   Edit Profile
                 </Button>
               </div>
@@ -427,7 +445,13 @@ export default function SettingsPage() {
             <Button variant="outline" className="w-full justify-start bg-transparent btn-premium">
               Contact Support
             </Button>
-            <Button variant="destructive" className="w-full justify-start btn-premium">
+            <Button
+              variant="destructive"
+              className="w-full justify-start btn-premium"
+              onClick={() => {
+                window.location.href = "/api/auth/logout"
+              }}
+            >
               Sign Out
             </Button>
           </motion.div>

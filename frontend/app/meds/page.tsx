@@ -12,9 +12,10 @@ import { VoiceMic } from "@/components/voice-mic"
 import { PhotoUpload } from "@/components/photo-upload"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
+import { listMedications, createMedication, deleteMedication, type ApiMedication } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-interface Medication {
+interface MedicationUI {
   id: string
   name: string
   dosage: string
@@ -27,77 +28,96 @@ interface Medication {
 }
 
 export default function MedicationsPage() {
-  const [medications, setMedications] = useState<Medication[]>([])
+  const [medications, setMedications] = useState<MedicationUI[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [draft, setDraft] = useState<{
+    name: string
+    strength_text: string
+    frequency_text: string
+    times: string[]
+    instructions: string
+  }>({ name: '', strength_text: '', frequency_text: '', times: [], instructions: '' })
   const [searchQuery, setSearchQuery] = useState("")
   const [filterBy, setFilterBy] = useState<"all" | "due" | "taken">("all")
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
 
   useEffect(() => {
-    // Mock data loading
-    setTimeout(() => {
-      setMedications([
-        {
-          id: "1",
-          name: "Lisinopril",
-          dosage: "10mg",
-          frequency: "Once daily",
-          times: ["08:00"],
-          instructions: "Take with food",
-          color: "bg-blue-500",
-          nextDose: "08:00",
-          adherenceRate: 95,
-        },
-        {
-          id: "2",
-          name: "Metformin",
-          dosage: "500mg",
-          frequency: "Twice daily",
-          times: ["08:00", "20:00"],
-          instructions: "Take with meals",
-          color: "bg-green-500",
-          nextDose: "12:00",
-          adherenceRate: 88,
-        },
-        {
-          id: "3",
-          name: "Atorvastatin",
-          dosage: "20mg",
-          frequency: "Once daily",
-          times: ["20:00"],
-          instructions: "Take at bedtime",
-          color: "bg-purple-500",
-          nextDose: "20:00",
-          adherenceRate: 92,
-        },
-      ])
-      setLoading(false)
-    }, 800)
+    const load = async () => {
+      try {
+        const data = await listMedications()
+        const ui: MedicationUI[] = data.map((m) => ({
+          id: m.id,
+          name: m.name,
+          dosage: m.strength_text || "",
+          frequency: m.frequency_text || (m.times.length === 1 ? "Once daily" : `${m.times.length}x daily`),
+          times: m.times || [],
+          instructions: m.instructions || undefined,
+          color: "bg-teal-500",
+        }))
+        setMedications(ui)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
   }, [])
 
   const filteredMedications = medications.filter((med) => {
-    const matchesSearch = med.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesSearch = (med.name || "").toLowerCase().includes((searchQuery || "").toLowerCase())
     if (filterBy === "all") return matchesSearch
     // Add filter logic here based on due/taken status
     return matchesSearch
   })
 
-  const handleAddMedication = (imageUrl: string, parsedData: any) => {
-    const newMedication: Medication = {
-      id: Date.now().toString(),
-      name: parsedData.name,
-      dosage: parsedData.dosage,
-      frequency: parsedData.frequency,
-      times: parsedData.times,
-      instructions: parsedData.instructions,
-      color: "bg-teal-500",
-      adherenceRate: 100,
-    }
-    setMedications((prev) => [...prev, newMedication])
-    setShowAddModal(false)
+  const handleExtracted = (_imageUrl: string, parsedData: any) => {
+    // Mirror /meds/new behavior: take first medication and prefill, with simple fallbacks
+    const first = Array.isArray(parsedData?.medications) ? parsedData.medications[0] : parsedData?.medications?.[0]
+    if (!first) return
+    const times: string[] = Array.isArray(first.times) && first.times.length ? first.times : ["", ""]
+    setDraft((d) => ({
+      ...d,
+      name: first.name || d.name,
+      strength_text: first.strength_text || d.strength_text,
+      frequency_text: first.frequency_text || d.frequency_text,
+      times,
+      instructions: first.instructions || d.instructions,
+    }))
   }
+
+  const saveMedication = async () => {
+    try {
+      setIsSaving(true)
+      const created = await createMedication({
+        name: draft.name,
+        strength_text: draft.strength_text || undefined,
+        frequency_text: draft.frequency_text || undefined,
+        times: draft.times.filter(Boolean),
+        instructions: draft.instructions || undefined,
+      })
+      const newMedication: MedicationUI = {
+        id: created.id,
+        name: created.name,
+        dosage: created.strength_text || '',
+        frequency: created.frequency_text || (created.times.length === 1 ? 'Once daily' : (created.times.length ? `${created.times.length}x daily` : '')),
+        times: created.times || [],
+        instructions: created.instructions || undefined,
+        color: 'bg-teal-500',
+        adherenceRate: 100,
+      }
+      setMedications((prev) => [...prev, newMedication])
+      setShowAddModal(false)
+      setDraft({ name: '', strength_text: '', frequency_text: '', times: [], instructions: '' })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const addDraftTime = () => setDraft((d) => ({ ...d, times: [...d.times, ''] }))
+  const removeDraftTime = (i: number) => setDraft((d) => ({ ...d, times: d.times.filter((_, idx) => idx !== i) }))
+  const updateDraftTime = (i: number, value: string) => setDraft((d) => ({ ...d, times: d.times.map((t, idx) => (idx === i ? value : t)) }))
 
   const getAdherenceColor = (rate: number) => {
     if (rate >= 90) return isDark ? "text-teal-400" : "text-teal-600"
@@ -317,11 +337,24 @@ export default function MedicationsPage() {
                               <p className="text-sm text-muted-foreground">{medication.frequency}</p>
                             </div>
                           </div>
-                          {medication.adherenceRate && (
-                            <Badge variant={getAdherenceBadge(medication.adherenceRate)} className="text-xs">
-                              {medication.adherenceRate}%
-                            </Badge>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {medication.adherenceRate && (
+                              <Badge variant={getAdherenceBadge(medication.adherenceRate)} className="text-xs">
+                                {medication.adherenceRate}%
+                              </Badge>
+                            )}
+                            <button
+                              className="text-xs text-destructive underline"
+                              onClick={async () => {
+                                try {
+                                  await deleteMedication(medication.id)
+                                  setMedications((prev) => prev.filter((m) => m.id !== medication.id))
+                                } catch {}
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
 
                         {medication.instructions && (
@@ -365,7 +398,7 @@ export default function MedicationsPage() {
         <AnimatePresence>
           {showAddModal && (
             <motion.div
-              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+              className="fixed inset-0 z-50 flex items-start justify-center p-4"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -376,27 +409,70 @@ export default function MedicationsPage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setShowAddModal(false)}
               />
               <motion.div
-                className="relative w-full max-w-md bg-card border border-border rounded-2xl shadow-xl"
+                className="relative w-full max-w-md bg-card border border-border rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto"
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
                 transition={{ duration: durations.md / 1000, ease: easing.enter }}
               >
-                <div className="p-6">
+                <div className="p-6 pb-24">
                   <div className="mb-4">
                     <h2 className="font-heading text-lg font-semibold text-foreground">Add New Medication</h2>
                     <p className="text-sm text-muted-foreground text-pretty">
                       Upload a photo of your medication for automatic information extraction
                     </p>
                   </div>
-                  <PhotoUpload onUpload={handleAddMedication} />
-                  <div className="mt-4 flex justify-end">
-                    <Button variant="ghost" onClick={() => setShowAddModal(false)} className="btn-premium">
-                      Cancel
-                    </Button>
+                  <PhotoUpload onUpload={handleExtracted} />
+
+                  {/* Draft editor – always visible like /meds/new */}
+                  <div className="mt-6 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">Medication Name</label>
+                        <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} className="w-full px-3 py-2 rounded-md bg-background border" placeholder="e.g., Lipitor" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">Dosage</label>
+                        <input value={draft.strength_text} onChange={(e) => setDraft((d) => ({ ...d, strength_text: e.target.value }))} className="w-full px-3 py-2 rounded-md bg-background border" placeholder="e.g., 10 mg" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-muted-foreground mb-1">Frequency</label>
+                      <select value={draft.frequency_text} onChange={(e) => setDraft((d) => ({ ...d, frequency_text: e.target.value }))} className="w-full px-3 py-2 rounded-md bg-background border">
+                        <option value="">Select frequency</option>
+                        <option value="Once daily">Once daily</option>
+                        <option value="Twice daily">Twice daily</option>
+                        <option value="Three times daily">Three times daily</option>
+                        <option value="Four times daily">Four times daily</option>
+                        <option value="As needed">As needed</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs text-muted-foreground">Times</label>
+                        <Button variant="ghost" size="sm" onClick={addDraftTime}>Add time</Button>
+                      </div>
+                      <div className="space-y-2">
+                        {draft.times.map((t, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <input type="time" value={t} onChange={(e) => updateDraftTime(i, e.target.value)} className="flex-1 px-3 py-2 rounded-md bg-background border" />
+                            <Button variant="ghost" size="sm" onClick={() => removeDraftTime(i)}>Remove</Button>
+                          </div>
+                        ))}
+                        {draft.times.length === 0 && <div className="text-xs text-muted-foreground">No times detected. Add at least one.</div>}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-muted-foreground mb-1">Instructions (optional)</label>
+                      <textarea value={draft.instructions} onChange={(e) => setDraft((d) => ({ ...d, instructions: e.target.value }))} rows={3} className="w-full px-3 py-2 rounded-md bg-background border" placeholder="e.g., Take with food" />
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-end gap-2 sticky bottom-0 bg-card py-3">
+                      <Button variant="ghost" onClick={() => setShowAddModal(false)} className="btn-premium">Cancel</Button>
+                      <Button onClick={saveMedication} disabled={isSaving || !draft.name || draft.times.filter(Boolean).length === 0} className="btn-premium">{isSaving ? 'Adding...' : 'Add Medication'}</Button>
+                    </div>
                   </div>
                 </div>
               </motion.div>

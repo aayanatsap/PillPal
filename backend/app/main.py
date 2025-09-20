@@ -43,12 +43,18 @@ class UserResponse(BaseModel):
     role: UserRole
     created_at: datetime
 
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[UserRole] = None
+    phone_enc: Optional[str] = None
+
 class MedicationCreate(BaseModel):
     name: str
     strength_text: Optional[str] = None
     dose_text: Optional[str] = None
     instructions: Optional[str] = None
     times: List[str] = []  # ["08:00", "20:00"]
+    frequency_text: Optional[str] = None
 
 class MedicationResponse(BaseModel):
     id: str
@@ -57,6 +63,7 @@ class MedicationResponse(BaseModel):
     dose_text: Optional[str]
     instructions: Optional[str]
     times: List[str]
+    frequency_text: Optional[str] = None
     created_at: datetime
 
 class DoseCreate(BaseModel):
@@ -134,7 +141,7 @@ async def label_extract(
         image_data = await file.read()
         
         # Use Gemini to extract medication info
-        result = await gemini_service.extract_medication_from_label(image_data)
+        result = await gemini_service.extract_medication_from_label(image_data, file.content_type)
         
         # Log the extraction event
         intake_data = {
@@ -152,11 +159,7 @@ async def label_extract(
         
         return {
             "success": True,
-            "medication_info": result,
-            "suggestions": {
-                "create_medication": result.get("confidence", 0) > 0.7,
-                "review_required": result.get("confidence", 0) < 0.8
-            }
+            "medications": result.get("medications") or [result],
         }
         
     except Exception as e:
@@ -211,6 +214,27 @@ async def get_current_user(claims: dict = Depends(verify_jwt)):
         created_at=user["created_at"]
     )
 
+@app.patch("/api/v1/user/me", response_model=UserResponse)
+async def update_current_user(update: UserUpdate, claims: dict = Depends(verify_jwt)):
+    user_id = await get_or_create_user(claims)
+    update_data = {}
+    if update.name is not None:
+        update_data["name"] = update.name
+    if update.role is not None:
+        update_data["role"] = update.role.value
+    if not update_data:
+        # No-op, return current
+        result = supabase.table("users").select("*").eq("id", user_id).execute()
+        user = result.data[0]
+        return UserResponse(
+            id=user["id"], auth0_sub=user["auth0_sub"], name=user["name"], role=user["role"], created_at=user["created_at"]
+        )
+    result = supabase.table("users").update(update_data).eq("id", user_id).execute()
+    user = result.data[0]
+    return UserResponse(
+        id=user["id"], auth0_sub=user["auth0_sub"], name=user["name"], role=user["role"], created_at=user["created_at"]
+    )
+
 @app.get("/api/v1/user/next-dose")
 async def get_next_dose(claims: dict = Depends(verify_jwt)):
     user_id = await get_or_create_user(claims)
@@ -242,36 +266,81 @@ async def create_medication(
     claims: dict = Depends(verify_jwt)
 ):
     user_id = await get_or_create_user(claims)
-    
-    # Use Supabase client for CRUD (simpler than SQLAlchemy for this hackathon)
+    # Basic validation to avoid 500s from DB
+    if not med.name or not isinstance(med.times, list) or len([t for t in med.times if t]) == 0:
+        raise HTTPException(status_code=400, detail="name and at least one time are required")
+
+    med_times_clean = [t for t in med.times if isinstance(t, str) and t]
+
     med_data = {
         "user_id": user_id,
         "name": med.name,
         "strength_text": med.strength_text,
         "dose_text": med.dose_text,
-        "instructions": med.instructions
+        "instructions": med.instructions,
+        "frequency_text": med.frequency_text,
     }
-    
-    result = supabase.table("medications").insert(med_data).execute()
-    medication = result.data[0]
-    
-    # Add times
-    times_data = [
-        {"medication_id": medication["id"], "time_of_day": t}
-        for t in med.times
-    ]
-    if times_data:
-        supabase.table("med_times").insert(times_data).execute()
-    
-    return MedicationResponse(
-        id=medication["id"],
-        name=medication["name"],
-        strength_text=medication["strength_text"],
-        dose_text=medication["dose_text"],
-        instructions=medication["instructions"],
-        times=med.times,
-        created_at=medication["created_at"]
-    )
+
+    try:
+        result = supabase.table("medications").insert(med_data).execute()
+        if not result or not getattr(result, "data", None):
+            err = getattr(result, "error", None)
+            raise Exception(f"Insert medications failed: {err}")
+        medication = result.data[0]
+
+        # Add times
+        times_data = [
+            {"medication_id": medication["id"], "time_of_day": t}
+            for t in med_times_clean
+        ]
+        if times_data:
+            t_res = supabase.table("med_times").insert(times_data).execute()
+            if not getattr(t_res, "data", None) and getattr(t_res, "error", None):
+                raise Exception(f"Insert med_times failed: {t_res.error}")
+
+        return MedicationResponse(
+            id=medication["id"],
+            name=medication["name"],
+            strength_text=medication["strength_text"],
+            dose_text=medication["dose_text"],
+            instructions=medication["instructions"],
+            times=med_times_clean,
+            frequency_text=medication.get("frequency_text"),
+            created_at=medication["created_at"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Fallback: some columns may not exist in current schema (e.g., frequency_text or dose_text).
+        # Try minimal insert with only required fields, then proceed.
+        try:
+            minimal = {"user_id": user_id, "name": med.name}
+            result2 = supabase.table("medications").insert(minimal).execute()
+            if not result2 or not getattr(result2, "data", None):
+                err2 = getattr(result2, "error", None)
+                raise Exception(f"Minimal insert failed: {err2}")
+            medication = result2.data[0]
+
+            # Add times
+            med_times_clean = [t for t in med.times if isinstance(t, str) and t]
+            if med_times_clean:
+                supabase.table("med_times").insert([
+                    {"medication_id": medication["id"], "time_of_day": t}
+                    for t in med_times_clean
+                ]).execute()
+
+            return MedicationResponse(
+                id=medication["id"],
+                name=medication["name"],
+                strength_text=med.strength_text,
+                dose_text=med.dose_text,
+                instructions=med.instructions,
+                times=med_times_clean,
+                frequency_text=None,
+                created_at=medication["created_at"]
+            )
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Create medication failed: {str(e2)}")
 
 
 @app.get("/api/v1/medications", response_model=List[MedicationResponse])
@@ -294,10 +363,28 @@ async def get_medications(claims: dict = Depends(verify_jwt)):
             dose_text=med["dose_text"],
             instructions=med["instructions"],
             times=times,
+            frequency_text=med.get("frequency_text"),
             created_at=med["created_at"]
         ))
     
     return medications
+
+
+@app.delete("/api/v1/medications/{medication_id}")
+async def delete_medication(medication_id: str, claims: dict = Depends(verify_jwt)):
+    """Delete medication and its times for current user."""
+    user_id = await get_or_create_user(claims)
+    # Ensure medication belongs to user
+    med = supabase.table("medications").select("id").eq("id", medication_id).eq("user_id", user_id).execute()
+    if not med.data:
+        raise HTTPException(status_code=404, detail="Medication not found")
+    # Delete dependent times first
+    supabase.table("med_times").delete().eq("medication_id", medication_id).execute()
+    # Delete doses associated with this medication (optional cleanup)
+    supabase.table("doses").delete().eq("medication_id", medication_id).eq("user_id", user_id).execute()
+    # Delete medication
+    supabase.table("medications").delete().eq("id", medication_id).eq("user_id", user_id).execute()
+    return {"success": True}
 
 
 # Doses endpoints

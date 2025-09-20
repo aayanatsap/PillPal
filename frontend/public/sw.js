@@ -60,6 +60,11 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
+  // Skip API/auth/proxy requests entirely to avoid CORS/redirect issues
+  if (url.pathname.startsWith("/api/")) {
+    return
+  }
+
   // Skip external requests
   if (url.origin !== location.origin) {
     return

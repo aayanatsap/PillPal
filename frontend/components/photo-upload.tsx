@@ -9,17 +9,18 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useMotion } from "@/components/motion-provider"
 import { cn } from "@/lib/utils"
+import { extractLabel } from "@/lib/api"
 
 interface ParsedMedicationData {
-  name: string
-  dosage: string
-  frequency: string
-  times: string[]
-  instructions: string
+  name?: string
+  strength_text?: string
+  instructions?: string
+  times?: string[]
+  frequency_text?: string
 }
 
 interface PhotoUploadProps {
-  onUpload: (imageUrl: string, parsedData: ParsedMedicationData) => void
+  onUpload: (imageUrl: string, parsedData: any) => void
   className?: string
 }
 
@@ -68,21 +69,27 @@ export function PhotoUpload({ onUpload, className }: PhotoUploadProps) {
     const imageUrl = URL.createObjectURL(file)
     setUploadedImage(imageUrl)
 
-    // Simulate AI parsing with realistic delay
-    await new Promise((resolve) => setTimeout(resolve, 2500))
-
-    // Mock parsed data with realistic medication info
-    const mockParsedData: ParsedMedicationData = {
-      name: "Lisinopril",
-      dosage: "10mg",
-      frequency: "Once daily",
-      times: ["08:00"],
-      instructions: "Take with food, avoid potassium supplements",
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const result = await extractLabel(fd)
+      // For preview card, show the first med's fields
+      const meds = Array.isArray(result?.medications) ? result.medications : []
+      const first = meds[0] || {}
+      setParsedData({
+        name: first.name,
+        strength_text: first.strength_text,
+        instructions: first.instructions,
+        times: first.times,
+        frequency_text: first.frequency_text,
+      })
+      onUpload(imageUrl, result)
+    } catch (e) {
+      // Fallback: let user fill manually
+      setParsedData(null)
+    } finally {
+      setIsUploading(false)
     }
-
-    setParsedData(mockParsedData)
-    setIsUploading(false)
-    onUpload(imageUrl, mockParsedData)
   }
 
   return (
@@ -224,12 +231,18 @@ export function PhotoUpload({ onUpload, className }: PhotoUploadProps) {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Dosage:</span>
-                <span className="text-foreground font-medium">{parsedData.dosage}</span>
+                <span className="text-foreground font-medium">{parsedData.strength_text}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Frequency:</span>
-                <span className="text-foreground font-medium">{parsedData.frequency}</span>
+                <span className="text-foreground font-medium">{parsedData.frequency_text}</span>
               </div>
+              {parsedData.times && parsedData.times.length > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Times:</span>
+                  <span className="text-foreground font-medium">{parsedData.times.join(", ")}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Instructions:</span>
                 <span className="text-foreground font-medium text-right max-w-48">{parsedData.instructions}</span>

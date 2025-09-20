@@ -24,7 +24,7 @@ const mockAlerts: Alert[] = [
     status: "active",
     createdAt: "2024-01-15T10:00:00Z",
     patientId: "1",
-    patientName: "Sarah Johnson",
+    patientName: "",
   },
   {
     id: "2",
@@ -35,7 +35,7 @@ const mockAlerts: Alert[] = [
     status: "active",
     createdAt: "2024-01-15T08:30:00Z",
     patientId: "1",
-    patientName: "Sarah Johnson",
+    patientName: "",
   },
   {
     id: "3",
@@ -46,7 +46,7 @@ const mockAlerts: Alert[] = [
     status: "active",
     createdAt: "2024-01-15T09:15:00Z",
     patientId: "1",
-    patientName: "Sarah Johnson",
+    patientName: "",
   },
   {
     id: "4",
@@ -58,7 +58,7 @@ const mockAlerts: Alert[] = [
     createdAt: "2024-01-14T16:20:00Z",
     acknowledgedAt: "2024-01-14T16:25:00Z",
     patientId: "1",
-    patientName: "Sarah Johnson",
+    patientName: "",
   },
   {
     id: "5",

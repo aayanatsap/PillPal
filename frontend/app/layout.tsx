@@ -1,4 +1,4 @@
-'use client'
+// Root layout must be a server component for metadata export
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter, Plus_Jakarta_Sans } from "next/font/google"

@@ -56,7 +56,7 @@ export default function CaregiverPage() {
       setData({
         patient: {
           id: "1",
-          name: "Sarah Johnson",
+          name: "",
           riskLevel: "Low",
           riskScore: 85,
           avatar: "/elderly-woman-smiling.png",

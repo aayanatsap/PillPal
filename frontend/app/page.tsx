@@ -14,66 +14,37 @@ import { useToast } from "@/hooks/use-toast"
 import { useMotion } from "@/components/motion-provider"
 import { EncouragementCard } from "@/components/encouragement-card"
 
-// Mock data types
-interface Patient {
-  id: string
-  name: string
-  riskScore: number
-  riskLevel: "Low" | "Medium" | "High"
-}
-
-interface Dose {
-  id: string
-  medicationName: string
-  dosage: string
-  scheduledTime: string
-  status: "pending" | "taken" | "skipped" | "snoozed"
-  takenAt?: string
-}
+import { getUserMe, getNextDose, getDosesToday, patchDose, type ApiDose } from "@/lib/api"
 
 export default function Dashboard() {
-  const [patient, setPatient] = useState<Patient | null>(null)
-  const [doses, setDoses] = useState<Dose[]>([])
+  const [patientName, setPatientName] = useState<string>("")
+  const [doses, setDoses] = useState<ApiDose[]>([])
   const [loading, setLoading] = useState(true)
   const { toast } = useToast()
   const { prefersReducedMotion, easing, durations, stagger } = useMotion()
 
   useEffect(() => {
-    // Mock data loading
-    setTimeout(() => {
-      setPatient({
-        id: "1",
-        name: "Sarah",
-        riskScore: 85,
-        riskLevel: "Low",
-      })
-
-      setDoses([
-        {
-          id: "1",
-          medicationName: "Lisinopril",
-          dosage: "10mg",
-          scheduledTime: "08:00",
-          status: "taken",
-          takenAt: "08:05",
-        },
-        {
-          id: "2",
-          medicationName: "Metformin",
-          dosage: "500mg",
-          scheduledTime: "12:00",
-          status: "pending",
-        },
-        {
-          id: "3",
-          medicationName: "Atorvastatin",
-          dosage: "20mg",
-          scheduledTime: "20:00",
-          status: "pending",
-        },
-      ])
-      setLoading(false)
-    }, 1000)
+    const load = async () => {
+      try {
+        const me = await getUserMe()
+        setPatientName(me.name)
+        if (!me.name || me.name === 'Unknown User') {
+          window.location.href = '/onboarding'
+          return
+        }
+        const list = await getDosesToday()
+        setDoses(list)
+      } catch (e: any) {
+        if (e?.status === 401) {
+          window.location.href = '/login'
+          return
+        }
+        toast({ title: "Please sign in", description: e?.message || "Authentication required" })
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
   }, [])
 
   const nextDose = doses.find((dose) => dose.status === "pending")
@@ -130,7 +101,7 @@ export default function Dashboard() {
           >
             <div className="space-y-2">
               <h1 className="font-heading text-2xl font-bold text-foreground text-balance">
-                {getGreeting()}, {patient?.name}
+                {getGreeting()}, {patientName || ""}
               </h1>
               <p className="text-muted-foreground text-pretty">
                 {todaysTaken} of {todaysTotal} doses taken today • {completionRate}% complete
@@ -151,7 +122,18 @@ export default function Dashboard() {
                 </div>
               </Card>
 
-              {patient && <RiskBadge score={patient.riskScore} level={patient.riskLevel} />}
+              <RiskBadge
+                score={Number.isFinite(completionRate) ? Math.max(0, Math.min(100, completionRate)) : 0}
+                level={
+                  Number.isFinite(completionRate)
+                    ? completionRate >= 80
+                      ? "Low"
+                      : completionRate >= 50
+                        ? "Medium"
+                        : "High"
+                    : "Medium"
+                }
+              />
             </div>
           </motion.div>
 
@@ -175,13 +157,11 @@ export default function Dashboard() {
                         <Clock className="w-4 h-4 text-yellow-400" />
                         <span className="text-sm font-medium text-yellow-400">Next Dose</span>
                       </div>
-                      <h3 className="font-heading text-lg font-semibold text-foreground">{nextDose.medicationName}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {nextDose.dosage} • Due at {nextDose.scheduledTime}
-                      </p>
+                      <h3 className="font-heading text-lg font-semibold text-foreground">{nextDose.medication_name}</h3>
+                      <p className="text-sm text-muted-foreground">Due at {new Date(nextDose.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-bold font-heading text-yellow-400">{nextDose.scheduledTime}</p>
+                      <p className="text-2xl font-bold font-heading text-yellow-400">{new Date(nextDose.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                       <Badge variant="default" className="mt-1">
                         Due Soon
                       </Badge>
@@ -253,23 +233,25 @@ export default function Dashboard() {
                   }}
                 >
                   <DoseCard
-                    dose={dose}
+                    dose={{
+                      id: dose.id,
+                      medicationName: dose.medication_name || "",
+                      dosage: "",
+                      scheduledTime: new Date(dose.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      status: dose.status,
+                      takenAt: dose.taken_at || undefined,
+                    }}
                     delay={index}
                     onStatusChange={(newStatus) => {
-                      setDoses((prev) =>
-                        prev.map((d) =>
-                          d.id === dose.id
-                            ? {
-                                ...d,
-                                status: newStatus,
-                                takenAt:
-                                  newStatus === "taken"
-                                    ? new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                                    : d.takenAt,
-                              }
-                            : d,
-                        ),
-                      )
+                      patchDose(dose.id, {
+                        status: newStatus,
+                        taken_at:
+                          newStatus === 'taken'
+                            ? new Date().toISOString()
+                            : undefined,
+                      }).then((updated) => {
+                        setDoses((prev) => prev.map((d) => (d.id === dose.id ? { ...d, status: updated.status, taken_at: updated.taken_at || null } : d)))
+                      })
 
                       if (newStatus === "taken") {
                         toast({

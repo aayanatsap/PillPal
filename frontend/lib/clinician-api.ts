@@ -35,8 +35,8 @@ export interface ClinicianData {
 const mockPatients: PatientRecord[] = [
   {
     id: "1",
-    name: "Sarah Johnson",
-    email: "sarah@example.com",
+    name: "",
+    email: "",
     adherence: 85,
     riskLevel: "Medium",
     riskScore: 62,

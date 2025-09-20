@@ -16,12 +16,24 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   })
 
   if (!res.ok) {
+    if (res.status === 401) {
+      // Redirect to login on auth errors
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login'
+      }
+    }
     let message = 'Request failed'
     try {
       const err = await res.json()
       message = err?.detail || err?.message || message
-    } catch {}
-    const error: ApiErrorShape = { status: res.status, message }
+    } catch {
+      try {
+        const text = await res.text()
+        if (text) message = text
+      } catch {}
+    }
+    const error = new Error(`${res.status} ${message}`) as Error & { status?: number }
+    error.status = res.status
     throw error
   }
 
@@ -30,160 +42,112 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return (await res.json()) as T
 }
 
-// Mock API functions for the medication management app
+// Real API wrappers (FastAPI via Next proxy)
+export interface ApiUser {
+  id: string
+  auth0_sub: string
+  role: 'patient' | 'caregiver' | 'clinician'
+  name: string
+  phone_enc?: string | null
+  created_at: string
+}
 
-export interface Medication {
+export interface ApiDose {
+  id: string
+  medication_id: string
+  scheduled_at: string
+  status: 'pending' | 'taken' | 'skipped' | 'snoozed'
+  taken_at?: string | null
+  notes?: string | null
+  medication_name?: string
+}
+
+export async function getUserMe(): Promise<ApiUser> {
+  return apiFetch<ApiUser>('/api/v1/user/me')
+}
+
+export async function updateUserMe(body: Partial<Pick<ApiUser, 'name' | 'role' | 'phone_enc'>>): Promise<ApiUser> {
+  return apiFetch<ApiUser>('/api/v1/user/me', {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getNextDose(): Promise<{ dose_id: string; medication_name: string; scheduled_at: string } | { message: string }> {
+  return apiFetch('/api/v1/user/next-dose')
+}
+
+export async function getDosesToday(): Promise<ApiDose[]> {
+  return apiFetch('/api/v1/doses')
+}
+
+export async function patchDose(
+  doseId: string,
+  body: Partial<{ status: 'taken' | 'skipped' | 'snoozed'; taken_at?: string; notes?: string }>,
+): Promise<ApiDose> {
+  return apiFetch(`/api/v1/doses/${doseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export interface ApiMedication {
   id: string
   name: string
-  dosage: string
-  frequency: string
+  strength_text?: string | null
+  dose_text?: string | null
+  instructions?: string | null
   times: string[]
-  instructions?: string
-  imageUrl?: string
+  frequency_text?: string | null
+  created_at: string
 }
 
-export interface Dose {
-  id: string
-  medicationId: string
-  scheduledTime: string
-  status: "pending" | "taken" | "skipped" | "snoozed"
-  takenAt?: string
-  notes?: string
+export const listMedications = async (): Promise<ApiMedication[]> => {
+  return apiFetch<ApiMedication[]>('/api/v1/medications')
 }
 
-export interface Patient {
-  id: string
+export async function createMedication(payload: {
   name: string
-  email: string
-  riskScore: number
-  riskLevel: "Low" | "Medium" | "High"
+  strength_text?: string
+  dose_text?: string
+  instructions?: string
+  frequency_text?: string
+  times: string[]
+}): Promise<ApiMedication> {
+  return apiFetch('/api/v1/medications', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
-export interface Alert {
-  id: string
-  patientId: string
-  type: "missed_dose" | "late_dose" | "risk_increase"
-  message: string
-  severity: "low" | "medium" | "high"
-  createdAt: string
-  acknowledgedAt?: string
+export async function deleteMedication(medicationId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/api/v1/medications/${medicationId}`, { method: 'DELETE' })
 }
 
-// Mock data
-const mockPatient: Patient = {
-  id: "1",
-  name: "Sarah Johnson",
-  email: "sarah@example.com",
-  riskScore: 62,
-  riskLevel: "Medium",
+export async function extractLabel(formData: FormData): Promise<any> {
+  return fetch('/api/proxy/api/v1/label-extract', {
+    method: 'POST',
+    body: formData as any,
+  }).then(async (r) => {
+    if (!r.ok) throw new Error('Label extraction failed')
+    return r.json()
+  })
 }
 
-const mockMedications: Medication[] = [
-  {
-    id: "1",
-    name: "Lisinopril",
-    dosage: "10mg",
-    frequency: "Once daily",
-    times: ["08:00"],
-    instructions: "Take with food",
-  },
-  {
-    id: "2",
-    name: "Metformin",
-    dosage: "500mg",
-    frequency: "Twice daily",
-    times: ["08:00", "20:00"],
-    instructions: "Take with meals",
-  },
-]
-
-const mockDoses: Dose[] = [
-  {
-    id: "1",
-    medicationId: "1",
-    scheduledTime: "08:00",
-    status: "pending",
-  },
-  {
-    id: "2",
-    medicationId: "2",
-    scheduledTime: "08:00",
-    status: "taken",
-    takenAt: "08:15",
-  },
-  {
-    id: "3",
-    medicationId: "2",
-    scheduledTime: "20:00",
-    status: "pending",
-  },
-]
-
-const mockAlerts: Alert[] = [
-  {
-    id: "1",
-    patientId: "1",
-    type: "missed_dose",
-    message: "Lisinopril dose missed at 8:00 AM",
-    severity: "medium",
-    createdAt: new Date().toISOString(),
-  },
-]
-
-// API functions
-export async function getPatient(): Promise<Patient> {
-  await new Promise((resolve) => setTimeout(resolve, 500))
-  return mockPatient
-}
-
-export async function getMedications(): Promise<Medication[]> {
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  return mockMedications
-}
-
-export async function getTodaysDoses(): Promise<Dose[]> {
-  await new Promise((resolve) => setTimeout(resolve, 400))
-  return mockDoses
-}
-
-export async function markDoseTaken(doseId: string): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 200))
-  const dose = mockDoses.find((d) => d.id === doseId)
-  if (dose) {
-    dose.status = "taken"
-    dose.takenAt = new Date().toLocaleTimeString("en-US", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+// Voice intent
+export interface ApiIntentResponse {
+  intent: string
+  data: {
+    confidence: number
+    entities: Record<string, any>
+    suggested_response: string
+    original_query: string
   }
 }
 
-export async function snoozeDose(doseId: string, minutes: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 200))
-  const dose = mockDoses.find((d) => d.id === doseId)
-  if (dose) {
-    dose.status = "snoozed"
-  }
-}
-
-export async function skipDose(doseId: string): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 200))
-  const dose = mockDoses.find((d) => d.id === doseId)
-  if (dose) {
-    dose.status = "skipped"
-  }
-}
-
-export async function getAlerts(): Promise<Alert[]> {
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  return mockAlerts
-}
-
-export async function acknowledgeAlert(alertId: string): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 200))
-  const alert = mockAlerts.find((a) => a.id === alertId)
-  if (alert) {
-    alert.acknowledgedAt = new Date().toISOString()
-  }
+export async function parseIntent(query: string): Promise<ApiIntentResponse> {
+  return apiFetch<ApiIntentResponse>('/api/v1/intent', {
+    method: 'POST',
+    body: JSON.stringify({ query }),
+  })
 }

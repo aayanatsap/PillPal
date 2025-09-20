@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { cn } from "@/lib/utils"
+import { parseIntent } from "@/lib/api"
 
 type VoiceState = "idle" | "listening" | "processing" | "speaking"
 
@@ -107,25 +108,12 @@ export function VoiceMic() {
   }, [state, toast])
 
   const handleVoiceCommand = async (transcript: string) => {
-    // Simulate processing voice command
-    await new Promise((resolve) => setTimeout(resolve, 800))
-
-    // Mock voice command processing
-    const lowerTranscript = transcript.toLowerCase()
     let response = ""
-
-    if (lowerTranscript.includes("take") || lowerTranscript.includes("took")) {
-      response = "Dose recorded successfully. Great job staying on track!"
-    } else if (lowerTranscript.includes("skip")) {
-      response = "Dose marked as skipped. Please consult your doctor if you have concerns."
-    } else if (lowerTranscript.includes("snooze")) {
-      response = "Dose snoozed for 15 minutes. I'll remind you again soon."
-    } else if (lowerTranscript.includes("help")) {
-      response = "You can say 'take dose', 'skip dose', or 'snooze dose' to manage your medications."
-    } else if (lowerTranscript.includes("status") || lowerTranscript.includes("progress")) {
-      response = "You've taken 1 of 3 doses today. Your next dose is Metformin at 12:00 PM."
-    } else {
-      response = "I didn't understand that command. Try saying 'take dose' or 'help'."
+    try {
+      const result = await parseIntent(transcript)
+      response = result?.data?.suggested_response || "Got it."
+    } catch (e: any) {
+      response = e?.message || "Sorry, I couldn't process that."
     }
 
     // Speak response
@@ -144,10 +132,7 @@ export function VoiceMic() {
       setTranscript("")
     }
 
-    toast({
-      title: "Voice command processed",
-      description: response,
-    })
+    toast({ title: "Assistant", description: response })
   }
 
   const startListening = () => {

@@ -100,7 +100,7 @@ const mockTimelineGroups: TimelineGroup[] = [
 const mockCaregiverData: CaregiverData = {
   patient: {
     id: "1",
-    name: "Sarah Johnson",
+    name: "",
     riskLevel: "Medium",
   },
   adherenceRate: 85,
@@ -132,9 +132,9 @@ export async function getPatientContacts(): Promise<any[]> {
   return [
     {
       id: "1",
-      name: "Sarah Johnson",
+      name: "",
       phone: "+1 (555) 123-4567",
-      email: "sarah@example.com",
+      email: "",
       relationship: "Patient",
     },
     {
