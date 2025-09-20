@@ -278,7 +278,9 @@ begin
   end if;
 end $$;
 
-select * from v_next_dose;
-select * from doses order by scheduled_at limit 10;
-select * from medications;
-select * from med_times;
+-- 10) Optional sanity checks
+------------------------------------------------------------
+-- select * from v_next_dose;
+-- select * from doses order by scheduled_at limit 10;
+-- select * from medications;
+-- select * from med_times;
