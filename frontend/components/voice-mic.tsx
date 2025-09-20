@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { cn } from "@/lib/utils"
-import { parseIntent } from "@/lib/api"
+import { parseIntent as apiParseIntent } from "@/lib/api"
 
 type VoiceState = "idle" | "listening" | "processing" | "speaking"
 
@@ -17,14 +17,17 @@ interface SpeechRecognition extends EventTarget {
   lang: string
   start(): void
   stop(): void
+  abort(): void
   onstart: ((this: SpeechRecognition, ev: Event) => any) | null
   onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null
   onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null
   onend: ((this: SpeechRecognition, ev: Event) => any) | null
+  onspeechend: ((this: SpeechRecognition, ev: Event) => any) | null
 }
 
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList
+  resultIndex: number
 }
 
 interface SpeechRecognitionErrorEvent extends Event {
@@ -42,63 +45,193 @@ export function VoiceMic() {
   const [state, setState] = useState<VoiceState>("idle")
   const [isSupported, setIsSupported] = useState(false)
   const [transcript, setTranscript] = useState("")
+  const [resultOpen, setResultOpen] = useState(false)
+  const [resultText, setResultText] = useState<string>("")
+  const [resultTitle, setResultTitle] = useState<string>("Assistant")
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const lastTranscriptRef = useRef<string>("")
+  const stateRef = useRef<VoiceState>("idle")
+  const cumulativeFinalRef = useRef<string>("")
+  const userStopRef = useRef<boolean>(false)
+  const endFallbackTimerRef = useRef<number | null>(null)
+  const processedRef = useRef<boolean>(false)
+  const preferredVoiceRef = useRef<SpeechSynthesisVoice | null>(null)
   const { toast } = useToast()
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
 
+  // keep refs in sync for event handlers
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+  useEffect(() => {
+    lastTranscriptRef.current = transcript
+  }, [transcript])
+
   useEffect(() => {
     // Check for Web Speech API support
     if (typeof window !== "undefined") {
+      // Load TTS voices and choose a pleasant default
+      const pickVoice = () => {
+        const voices = window.speechSynthesis?.getVoices?.() || []
+        const preferredOrder = [
+          "Samantha",
+          "Google US English",
+          "Google UK English Female",
+          "Google UK English Male",
+          "Microsoft Aria Online (Natural - en-US)",
+          "Microsoft Jenny Online (Natural - en-US)",
+        ]
+        for (const name of preferredOrder) {
+          const v = voices.find((vv) => vv.name === name)
+          if (v) { preferredVoiceRef.current = v; return }
+        }
+        // Fallback to any en-* voice
+        const en = voices.find((vv) => /en[-_]/i.test(vv.lang))
+        preferredVoiceRef.current = en || null
+      }
+      try {
+        pickVoice()
+        window.speechSynthesis?.addEventListener?.("voiceschanged", pickVoice as any)
+      } catch {}
+
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       setIsSupported(!!SpeechRecognition)
 
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition()
+        // Prefer single-utterance behavior; we'll auto-stop on silence
         recognition.continuous = false
         recognition.interimResults = true
         recognition.lang = "en-US"
 
         recognition.onstart = () => {
+          console.info("[STT] start")
           setState("listening")
           setTranscript("")
+          cumulativeFinalRef.current = ""
+          userStopRef.current = false
+          processedRef.current = false
+          if (endFallbackTimerRef.current) {
+            window.clearTimeout(endFallbackTimerRef.current)
+            endFallbackTimerRef.current = null
+          }
         }
 
         recognition.onresult = (event) => {
           let interimTranscript = ""
-          let finalTranscript = ""
+          let finalSegment = ""
 
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript
             if (event.results[i].isFinal) {
-              finalTranscript += transcript
+              finalSegment += transcript
             } else {
               interimTranscript += transcript
             }
           }
 
-          setTranscript(finalTranscript || interimTranscript)
-
-          if (finalTranscript) {
-            setState("processing")
-            handleVoiceCommand(finalTranscript)
+          // Accumulate finals and display running text
+          if (finalSegment) {
+            cumulativeFinalRef.current = `${cumulativeFinalRef.current}${finalSegment}`.trim()
+            console.debug("[STT] final segment:", finalSegment)
+            console.debug("[STT] cumulative final:", cumulativeFinalRef.current)
           }
+          if (interimTranscript) {
+            console.debug("[STT] interim:", interimTranscript)
+          }
+          setTranscript(`${cumulativeFinalRef.current}${interimTranscript ? (cumulativeFinalRef.current ? " " : "") + interimTranscript : ""}`)
+
+          // Reset/end fallback timer on audio activity
+          if (endFallbackTimerRef.current) {
+            window.clearTimeout(endFallbackTimerRef.current)
+            endFallbackTimerRef.current = null
+          }
+          // If nothing else happens for 900ms after last chunk, process immediately
+          endFallbackTimerRef.current = window.setTimeout(() => {
+            if (processedRef.current) return
+            console.debug("[STT] silence timeout -> process now")
+            try { recognition.abort() } catch { try { recognition.stop() } catch {} }
+            const t = (cumulativeFinalRef.current || lastTranscriptRef.current || "").trim()
+            if (t.length > 0) {
+              processedRef.current = true
+              setState("processing")
+              handleVoiceCommand(t)
+            } else {
+              setState("idle")
+              setTranscript("")
+            }
+          }, 900)
         }
 
         recognition.onerror = (event) => {
-          setState("idle")
+          // Swallow benign errors like no-speech/aborted without alarming the user
+          const err: any = (event as any)?.error
+          console.debug("[STT] error:", err)
           setTranscript("")
+          if (err === "no-speech" || err === "aborted" || err === "audio-capture") {
+            // If we didn't ask to stop, try to continue listening
+            if (!userStopRef.current && stateRef.current === "listening") {
+              try { recognition.start() } catch {}
+              return
+            } else {
+              setState("idle")
+              return
+            }
+          }
+          setState("idle")
           toast({
-            title: "Voice recognition error",
-            description: "Please try again",
+            title: "Voice error",
+            description: typeof err === "string" ? err : "Please try again",
             variant: "destructive",
           })
         }
 
         recognition.onend = () => {
-          if (state === "listening") {
-            setState("idle")
-            setTranscript("")
+          console.info("[STT] end")
+          if (endFallbackTimerRef.current) {
+            window.clearTimeout(endFallbackTimerRef.current)
+            endFallbackTimerRef.current = null
+          }
+          const finalText = (cumulativeFinalRef.current || "").trim()
+          // If user clicked stop, process; otherwise auto-restart for continuous listening
+          if (userStopRef.current) {
+            console.debug("[STT] final transcript:", finalText)
+            if (finalText.length > 0) {
+              if (!processedRef.current) {
+                processedRef.current = true
+                setState("processing")
+                handleVoiceCommand(finalText)
+              }
+            } else {
+              setState("idle")
+              setTranscript("")
+            }
+          } else if (stateRef.current === "listening") {
+            // In single-utterance mode, onend means silence; auto-process
+            console.debug("[STT] silence auto-process")
+            if (finalText.length > 0) {
+              if (!processedRef.current) {
+                processedRef.current = true
+                setState("processing")
+                handleVoiceCommand(finalText)
+              }
+            } else {
+              setState("idle")
+              setTranscript("")
+            }
+          }
+        }
+
+        recognition.onspeechend = () => {
+          console.debug("[STT] speechend -> stop")
+          // Process immediately without waiting
+          try { recognition.abort() } catch { try { recognition.stop() } catch {} }
+          const t = (cumulativeFinalRef.current || lastTranscriptRef.current || "").trim()
+          if (t && !processedRef.current) {
+            processedRef.current = true
+            setState("processing")
+            handleVoiceCommand(t)
           }
         }
 
@@ -107,21 +240,53 @@ export function VoiceMic() {
     }
   }, [state, toast])
 
+  const callParseIntent = async (query: string) => {
+    // Use imported function if present; else fallback to direct fetch
+    try {
+      if (typeof (apiParseIntent as any) === 'function') {
+        return await (apiParseIntent as any)(query)
+      }
+    } catch {}
+    const res = await fetch('/api/proxy/api/v1/intent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    })
+    if (!res.ok) throw new Error(`Intent ${res.status}`)
+    return res.json()
+  }
+
   const handleVoiceCommand = async (transcript: string) => {
+    console.info("[Voice] handling transcript:", transcript)
     let response = ""
     try {
-      const result = await parseIntent(transcript)
-      response = result?.data?.suggested_response || "Got it."
+      const result = await callParseIntent(transcript)
+      console.info("[Voice] intent result:", result)
+      const suggested = result?.suggested_response || result?.data?.suggested_response
+      response = suggested || "Got it."
+      const confidence = (result?.data?.confidence ?? result?.confidence ?? 0)
+      setResultTitle(`Intent: ${result?.intent || 'unknown'} · ${Number(confidence).toFixed(2)}`)
+      setResultText(response)
+      setResultOpen(true)
     } catch (e: any) {
+      console.error("[Voice] intent error:", e)
       response = e?.message || "Sorry, I couldn't process that."
+      setResultTitle("Assistant error")
+      setResultText(response)
+      setResultOpen(true)
     }
 
     // Speak response
     if ("speechSynthesis" in window) {
       setState("speaking")
       const utterance = new SpeechSynthesisUtterance(response)
-      utterance.rate = 0.9
-      utterance.pitch = 1.1
+      // More natural settings
+      utterance.rate = 1.0
+      utterance.pitch = 1.0
+      // Prefer a pleasant voice if available
+      if (preferredVoiceRef.current) {
+        utterance.voice = preferredVoiceRef.current
+      }
       utterance.onend = () => {
         setState("idle")
         setTranscript("")
@@ -137,13 +302,25 @@ export function VoiceMic() {
 
   const startListening = () => {
     if (recognitionRef.current && state === "idle") {
+      userStopRef.current = false
+      cumulativeFinalRef.current = ""
+      if (endFallbackTimerRef.current) {
+        window.clearTimeout(endFallbackTimerRef.current)
+        endFallbackTimerRef.current = null
+      }
       recognitionRef.current.start()
     }
   }
 
   const stopListening = () => {
     if (recognitionRef.current && state === "listening") {
-      recognitionRef.current.stop()
+      userStopRef.current = true
+      // Use abort() to force immediate onend in some browsers
+      try { recognitionRef.current.abort() } catch { try { recognitionRef.current.stop() } catch {} }
+      if (endFallbackTimerRef.current) {
+        window.clearTimeout(endFallbackTimerRef.current)
+        endFallbackTimerRef.current = null
+      }
     }
   }
 
@@ -152,6 +329,15 @@ export function VoiceMic() {
       startListening()
     } else if (state === "listening") {
       stopListening()
+      // keep state as "listening" until onend fires; onend will process transcript
+    } else if (state === "processing") {
+      // ignore while processing
+    } else if (state === "speaking") {
+      try {
+        window.speechSynthesis.cancel()
+      } catch {}
+      setState("idle")
+      setTranscript("")
     }
   }
 
@@ -257,6 +443,40 @@ export function VoiceMic() {
             <p className="text-xs text-muted-foreground mb-1">You said:</p>
             <p className="font-medium">{transcript}</p>
             <div className="absolute top-full right-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-background/95" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Result modal (polished) */}
+      <AnimatePresence>
+        {resultOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setResultOpen(false)} />
+            <motion.div
+              className="relative w-full max-w-md bg-card/95 border border-border rounded-2xl shadow-xl overflow-hidden"
+              initial={{ y: 20, scale: 0.98, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 20, scale: 0.98, opacity: 0 }}
+            >
+              <div className="px-5 pt-4 pb-4">
+                <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
+                  {resultText}
+                </p>
+              </div>
+              <div className="px-5 pb-4 flex justify-end">
+                <button
+                  className="px-3 py-1.5 text-sm rounded-md border border-border text-muted-foreground hover:bg-muted/50"
+                  onClick={() => setResultOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

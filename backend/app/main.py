@@ -95,9 +95,21 @@ async def healthz() -> dict:
 async def parse_intent(body: IntentRequest, claims: dict = Depends(verify_jwt)):
     """Parse voice/text intent using Gemini AI"""
     user_id = await get_or_create_user(claims)
-    
-    # Use Gemini to parse intent
-    result = await gemini_service.parse_voice_intent(body.query)
+
+    # Build lightweight personalization context for grounding answers
+    # meds (name, strength, instructions), next dose time
+    context = {"medications": [], "next_dose": None}
+    try:
+        meds = supabase.table("medications").select("id,name,strength_text,instructions").eq("user_id", user_id).execute()
+        context["medications"] = meds.data or []
+        nd = supabase.rpc("exec_sql", {"sql": f"SELECT * FROM v_next_dose WHERE user_id = '{user_id}'"}).execute()
+        if nd.data:
+            context["next_dose"] = nd.data[0]
+    except Exception:
+        pass
+
+    # Use Gemini to parse intent with context
+    result = await gemini_service.parse_voice_intent(body.query, context)
     
     # Log the intent parsing event
     intent_data = {

@@ -24,22 +24,34 @@ class GeminiService:
             generation_config={"response_mime_type": "application/json", "temperature": 0.2}
         )
 
-    async def parse_voice_intent(self, voice_query: str) -> Dict[str, Any]:
+    async def parse_voice_intent(self, voice_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        ctx_json = "{}"
+        try:
+            if context is not None:
+                import json as _json
+                ctx_json = _json.dumps(context)
+        except Exception:
+            ctx_json = "{}"
+
         prompt = f"""
-You are a medication assistant. Parse this voice query and extract intent and relevant data.
+You are PillPal, a warm and brief medication assistant.
 
-Voice query: "{voice_query}"
+Context (JSON):
+{ctx_json}
 
-Respond with JSON in this exact format:
+User asked (natural language): "{voice_query}"
+
+Use the context (medications, times, next dose) to ground your answer.
+Return JSON exactly in this shape:
 {{
   "intent": "one of: next_dose, take_dose, skip_dose, add_medication, unknown",
   "confidence": 0.0-1.0,
   "entities": {{
-    "medication_name": "if mentioned",
-    "time": "if mentioned",
-    "dosage": "if mentioned"
+    "medication_name": "if mentioned or inferred",
+    "time": "if a time window is referenced",
+    "dosage": "if referenced"
   }},
-  "suggested_response": "helpful response to user"
+  "suggested_response": "A short, spoken-friendly reply for TTS"
 }}
 """
         try:
