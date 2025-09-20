@@ -177,7 +177,7 @@ Enhancements to implement:
 
 ### 16) Voice Input → Intent Parsing → UX actions — COMPLETED
 - Frontend
-  - `components/voice-mic.tsx` now captures speech via Web Speech API, sends transcript to the backend using `parseIntent(query)` from `lib/api.ts`, speaks Gemini’s `suggested_response`, and shows a toast.
+  - `components/voice-mic.tsx` now captures speech via Web Speech API, sends transcript to the backend using `parseIntent(query)` from `lib/api.ts`, speaks Gemini’s `suggested_response`, and shows a polished response modal (intent text hidden, clean layout). Silence auto-stops and processes immediately.
   - `lib/api.ts` exposes `parseIntent()` with typed `ApiIntentResponse`.
 - Backend
   - `/api/v1/intent` already implemented; uses Gemini text model and returns `{ intent, data: { confidence, entities, suggested_response, original_query } }`.

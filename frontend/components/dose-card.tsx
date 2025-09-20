@@ -177,9 +177,46 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
               {dose.status}
             </Badge>
 
+            {/* Desktop/tablet: inline actions */}
+            {dose.status === "pending" && (
+              <div className="hidden sm:flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleStatusChange("snoozed")}
+                  disabled={isUpdating}
+                  className="btn-premium"
+                >
+                  <Pause className="w-4 h-4 mr-1" />
+                  Snooze
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => handleStatusChange("skipped")}
+                  disabled={isUpdating}
+                  className="btn-premium"
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  Skip
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => handleStatusChange("taken")}
+                  disabled={isUpdating}
+                  className="btn-premium bg-teal-600 hover:bg-teal-700 text-white"
+                >
+                  <Check className="w-4 h-4 mr-1" />
+                  Take
+                </Button>
+              </div>
+            )}
+
+            {/* Mobile: prominent Actions toggle */}
             {dose.status === "pending" && (
               <motion.div
-                className="flex items-center"
+                className="sm:hidden flex items-center"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{
@@ -188,11 +225,11 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
                 }}
               >
                 <Button
-                  variant="ghost"
+                  variant="default"
                   size="sm"
                   onClick={() => setShowActions(!showActions)}
                   disabled={isUpdating}
-                  className="h-8 px-2"
+                  className={cn("h-8 px-3 btn-premium ring-2 ring-yellow-300/50", !prefersReducedMotion && "animate-pulse")}
                 >
                   Actions
                 </Button>
@@ -212,10 +249,11 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
           </motion.div>
         )}
 
+        {/* Mobile expanded actions */}
         <AnimatePresence>
           {showActions && dose.status === "pending" && (
             <motion.div
-              className="mt-4 pt-4 border-t border-border/50"
+              className="md:hidden mt-4 pt-4 border-t border-border/50"
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}

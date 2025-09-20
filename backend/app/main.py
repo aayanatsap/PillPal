@@ -436,26 +436,64 @@ async def create_dose(
 @app.get("/api/v1/doses", response_model=List[DoseResponse])
 async def get_doses(claims: dict = Depends(verify_jwt)):
     user_id = await get_or_create_user(claims)
-    
-    # Get doses with medication names
-    result = supabase.table("doses").select("""
-        id, medication_id, scheduled_at, status, taken_at, notes,
-        medications(name)
-    """).eq("user_id", user_id).order("scheduled_at").execute()
-    
-    doses = []
-    for dose in result.data:
-        doses.append(DoseResponse(
-            id=dose["id"],
-            medication_id=dose["medication_id"],
-            scheduled_at=dose["scheduled_at"],
-            status=dose["status"],
-            taken_at=dose["taken_at"],
-            notes=dose["notes"],
-            medication_name=dose["medications"]["name"] if dose["medications"] else "Unknown"
-        ))
-    
-    return doses
+
+    try:
+        # Simple select first (avoid relationship join issues on some PostgREST caches)
+        result = (
+            supabase
+            .table("doses")
+            .select("id, medication_id, scheduled_at, status, taken_at, notes")
+            .eq("user_id", user_id)
+            .order("scheduled_at")
+            .execute()
+        )
+
+        rows = result.data or []
+        medication_ids = sorted({row["medication_id"] for row in rows if row.get("medication_id")})
+
+        id_to_name = {}
+        if medication_ids:
+            try:
+                meds = (
+                    supabase
+                    .table("medications")
+                    .select("id,name")
+                    .in_("id", medication_ids)
+                    .execute()
+                )
+                for m in meds.data or []:
+                    id_to_name[m["id"]] = m["name"]
+            except Exception:
+                # Fallback to per-row fetch if IN is not supported in current client
+                for mid in medication_ids:
+                    try:
+                        mres = supabase.table("medications").select("name").eq("id", mid).limit(1).execute()
+                        if mres.data:
+                            id_to_name[mid] = mres.data[0]["name"]
+                    except Exception:
+                        pass
+
+        doses: List[DoseResponse] = []
+        for row in rows:
+            doses.append(DoseResponse(
+                id=row["id"],
+                medication_id=row["medication_id"],
+                scheduled_at=row["scheduled_at"],
+                status=row["status"],
+                taken_at=row["taken_at"],
+                notes=row["notes"],
+                medication_name=id_to_name.get(row["medication_id"], "Unknown"),
+            ))
+
+        return doses
+    except Exception as e:
+        # If anything goes wrong, return an empty list instead of 500 to avoid breaking the dashboard,
+        # but surface the error message for debugging.
+        try:
+            print(f"/api/v1/doses error: {e}")
+        except Exception:
+            pass
+        return []
 
 
 @app.patch("/api/v1/doses/{dose_id}", response_model=DoseResponse)

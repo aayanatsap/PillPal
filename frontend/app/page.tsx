@@ -47,10 +47,28 @@ export default function Dashboard() {
     load()
   }, [])
 
-  const nextDose = doses.find((dose) => dose.status === "pending")
-  const todaysTaken = doses.filter((dose) => dose.status === "taken").length
-  const todaysTotal = doses.length
-  const completionRate = Math.round((todaysTaken / todaysTotal) * 100)
+  // Only consider doses scheduled for today based on local calendar date
+  const today = new Date()
+  const yyyy = today.getFullYear()
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const dd = String(today.getDate()).padStart(2, '0')
+  const todayKey = `${yyyy}-${mm}-${dd}`
+
+  const localDateKey = (iso: string) => {
+    const d = new Date(iso)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  const dosesToday = doses
+    .filter((d) => localDateKey(d.scheduled_at) === todayKey)
+    .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())
+  const nextDose = dosesToday.find((dose) => dose.status === "pending")
+  const todaysTaken = dosesToday.filter((dose) => dose.status === "taken").length
+  const todaysTotal = dosesToday.length
+  const completionRate = todaysTotal > 0 ? Math.round((todaysTaken / todaysTotal) * 100) : 0
 
   const getGreeting = () => {
     const hour = new Date().getHours()
@@ -180,8 +198,8 @@ export default function Dashboard() {
                 <Card className="p-6 border-l-4 border-l-teal-400 bg-gradient-to-r from-teal-400/5 to-transparent transition-all duration-300 ease-out">
                   <div className="text-center space-y-2">
                     <CheckCircle className="w-8 h-8 text-teal-400 mx-auto" />
-                    <h3 className="font-heading text-lg font-semibold text-foreground">All doses complete!</h3>
-                    <p className="text-muted-foreground">Excellent work staying on track today</p>
+                    <h3 className="font-heading text-lg font-semibold text-foreground">{todaysTotal > 0 ? 'All doses complete!' : 'No doses scheduled today'}</h3>
+                    <p className="text-muted-foreground">{todaysTotal > 0 ? 'Excellent work staying on track today' : 'Add medications to see your schedule here'}</p>
                   </div>
                 </Card>
               </motion.div>
@@ -201,6 +219,7 @@ export default function Dashboard() {
             <div className="flex items-center space-x-2 mb-4">
               <Calendar className="w-5 h-5 text-muted-foreground" />
               <h2 className="font-heading text-lg font-semibold text-foreground">Today's Schedule</h2>
+              <span className="text-sm text-muted-foreground">{today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</span>
             </div>
 
             <motion.div
@@ -217,7 +236,7 @@ export default function Dashboard() {
                 },
               }}
             >
-              {doses.map((dose, index) => (
+              {dosesToday.map((dose, index) => (
                 <motion.div
                   key={dose.id}
                   variants={{
@@ -243,12 +262,11 @@ export default function Dashboard() {
                     }}
                     delay={index}
                     onStatusChange={(newStatus) => {
+                      if (newStatus === 'pending') return
+                      const status = newStatus as 'taken' | 'skipped' | 'snoozed'
                       patchDose(dose.id, {
-                        status: newStatus,
-                        taken_at:
-                          newStatus === 'taken'
-                            ? new Date().toISOString()
-                            : undefined,
+                        status,
+                        taken_at: status === 'taken' ? new Date().toISOString() : undefined,
                       }).then((updated) => {
                         setDoses((prev) => prev.map((d) => (d.id === dose.id ? { ...d, status: updated.status, taken_at: updated.taken_at || null } : d)))
                       })
