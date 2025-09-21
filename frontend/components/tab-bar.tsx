@@ -74,17 +74,17 @@ export function TabBar() {
                 }}
                 className="relative"
               >
-                <Icon size={20} className={cn("mb-1", isActive ? getActiveColor() : "text-muted-foreground")} />
+                <Icon size={20} className={cn(isActive ? getActiveColor() : "text-muted-foreground")} />
                 {isActive && (
                   <motion.div
                     layoutId="nav-active"
-                    className={cn("absolute -bottom-2 h-0.5 w-6 rounded-full left-1/2 -translate-x-1/2", getActiveIndicatorColor())}
+                    className={cn("absolute -bottom-1 h-0.5 w-6 rounded-full left-1/2 -translate-x-1/2", getActiveIndicatorColor())}
                     transition={{ type: "spring", stiffness: 420, damping: 30 }}
                   />
                 )}
               </motion.div>
               <span
-                className={cn("text-xs font-medium truncate mt-1", isActive ? getActiveColor() : "text-muted-foreground")}
+                className={cn("text-xs font-medium truncate mt-2", isActive ? getActiveColor() : "text-muted-foreground")}
               >
                 {tab.label}
               </span>
