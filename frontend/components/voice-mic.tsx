@@ -484,7 +484,7 @@ export function VoiceMic() {
       {/* Main FAB button */}
       <motion.button
         className={cn(
-          "w-16 h-16 rounded-full flex items-center justify-center relative",
+          "w-16 h-16 rounded-full flex items-center justify-center relative glass-3d soft-glow-primary hover-lift press-compress",
           "font-medium border-2 transition-all duration-300 ease-out",
           "motion-safe:transition-all motion-safe:duration-200",
           "motion-safe:hover:scale-105 motion-safe:active:scale-95",
@@ -511,7 +511,7 @@ export function VoiceMic() {
               ease: easing.enter,
             }}
           >
-            <Icon className="w-6 h-6" />
+            <Icon className={cn("w-6 h-6", isDark ? "text-yellow-400" : undefined)} />
           </motion.div>
         </AnimatePresence>
 

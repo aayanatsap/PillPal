@@ -8,7 +8,7 @@ import { ScheduleView } from "@/components/schedule-view"
 export default function SchedulePage() {
   return (
     <div className="min-h-screen bg-background">
-      <NavBar title="Schedule" showThemeToggle />
+      <NavBar title="" showThemeToggle />
 
       <main className="px-4 py-6 pb-20">
         <ScheduleView />

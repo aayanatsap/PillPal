@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -434,8 +434,10 @@ async def create_dose(
 
 
 @app.get("/api/v1/doses", response_model=List[DoseResponse])
-async def get_doses(claims: dict = Depends(verify_jwt)):
+async def get_doses(request: Request, claims: dict = Depends(verify_jwt)):
     user_id = await get_or_create_user(claims)
+    # Read user timezone from header; default UTC
+    user_tz = request.headers.get("X-User-Timezone", "UTC")
 
     try:
         # Simple select first (avoid relationship join issues on some PostgREST caches)
@@ -474,6 +476,8 @@ async def get_doses(claims: dict = Depends(verify_jwt)):
                         pass
 
         doses: List[DoseResponse] = []
+        # Convert scheduled_at/taken_at into user's local time string (ISO) for consistent client behavior
+        # We avoid heavy tz libs; keep original ISO but annotate by client side using header when needed.
         for row in rows:
             doses.append(DoseResponse(
                 id=row["id"],

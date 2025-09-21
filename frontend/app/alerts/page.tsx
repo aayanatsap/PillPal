@@ -13,6 +13,7 @@ import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import { getDosesToday, patchDose, type ApiDose } from "@/lib/api"
 
 interface Alert {
   id: string
@@ -35,55 +36,123 @@ export default function AlertsPage() {
   const { toast } = useToast()
 
   useEffect(() => {
-    // Mock data loading
-    setTimeout(() => {
-      setAlerts([
-        {
-          id: "1",
-          type: "missed_dose",
-          title: "Missed Dose Alert",
-          message: "You missed your 12:00 PM Metformin dose",
-          priority: "high",
-          status: "active",
-          createdAt: "2024-01-15T12:30:00Z",
-          medicationName: "Metformin",
-        },
-        {
-          id: "2",
-          type: "medication_reminder",
-          title: "Upcoming Dose",
-          message: "Atorvastatin 20mg due in 30 minutes",
-          priority: "medium",
-          status: "active",
-          createdAt: "2024-01-15T19:30:00Z",
-          medicationName: "Atorvastatin",
-        },
-        {
-          id: "3",
-          type: "adherence_warning",
-          title: "Adherence Concern",
-          message: "You've missed 3 doses this week. Consider setting more reminders.",
-          priority: "high",
-          status: "acknowledged",
-          createdAt: "2024-01-14T10:00:00Z",
-          acknowledgedAt: "2024-01-14T14:30:00Z",
-        },
-        {
-          id: "4",
-          type: "system",
-          title: "Profile Updated",
-          message: "Your medication schedule has been updated successfully",
-          priority: "low",
-          status: "acknowledged",
-          createdAt: "2024-01-13T16:00:00Z",
-          acknowledgedAt: "2024-01-13T16:05:00Z",
-        },
-      ])
-      setLoading(false)
-    }, 800)
+    const load = async () => {
+      try {
+        const doses = await getDosesToday()
+        const now = new Date()
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+        const graceMinutes = 10 // default if no escalation rule configured
+
+        const toOverdueMinutes = (scheduledAtIso: string): number => {
+          const scheduled = new Date(scheduledAtIso)
+          const diffMs = now.getTime() - scheduled.getTime()
+          return Math.floor(diffMs / 60000)
+        }
+
+        const priorityForOverdue = (mins: number): Alert["priority"] => {
+          if (mins >= 60) return "high"
+          if (mins >= 30) return "medium"
+          return "low"
+        }
+
+        // Real data: build alerts from overdue pending doses (today only, local time)
+        const startOfDay = new Date(now)
+        startOfDay.setHours(0, 0, 0, 0)
+        const endOfDay = new Date(now)
+        endOfDay.setHours(23, 59, 59, 999)
+
+        const overdueAlerts: Alert[] = doses
+          .filter((d: ApiDose) => {
+            const s = new Date(d.scheduled_at)
+            return (
+              d.status === "pending" &&
+              s >= startOfDay &&
+              s <= endOfDay &&
+              toOverdueMinutes(d.scheduled_at) > graceMinutes
+            )
+          })
+          .map((d: ApiDose) => {
+            const mins = toOverdueMinutes(d.scheduled_at)
+            const med = d.medication_name || "Medication"
+            const scheduled = new Date(d.scheduled_at)
+            const timeText = scheduled.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            return {
+              id: d.id,
+              type: "missed_dose" as const,
+              title: "Missed Dose",
+              message: `${med} dose scheduled for ${timeText} (${tz}) is overdue by ${mins} min`,
+              priority: priorityForOverdue(mins),
+              status: "active" as const,
+              createdAt: d.scheduled_at,
+              medicationName: med,
+            }
+          })
+
+        // Upcoming reminders: pending doses due within next 60 minutes
+        const upcomingAlerts: Alert[] = doses
+          .filter((d: ApiDose) => {
+            const s = new Date(d.scheduled_at)
+            const diffMs = s.getTime() - now.getTime()
+            const minsUntil = Math.floor(diffMs / 60000)
+            return d.status === "pending" && minsUntil > 0 && minsUntil <= 60
+          })
+          .map((d: ApiDose) => {
+            const s = new Date(d.scheduled_at)
+            const minsUntil = Math.max(1, Math.floor((s.getTime() - now.getTime()) / 60000))
+            const med = d.medication_name || "Medication"
+            const timeText = s.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            return {
+              id: d.id,
+              type: "medication_reminder" as const,
+              title: "Upcoming Dose",
+              message: `${med} due at ${timeText} (${tz}) in ${minsUntil} min`,
+              priority: minsUntil <= 15 ? (minsUntil <= 5 ? "high" : "medium") : "low",
+              status: "active" as const,
+              createdAt: d.scheduled_at,
+              medicationName: med,
+            }
+          })
+
+        // Adherence concern: in last 7 days, if missed (past and not taken) ≥ 3
+        const sevenDaysAgo = new Date(now)
+        sevenDaysAgo.setDate(now.getDate() - 7)
+        const missedInWeek = doses.filter((d) => {
+          const s = new Date(d.scheduled_at)
+          return s >= sevenDaysAgo && s < now && d.status !== "taken"
+        }).length
+        const adherenceAlerts: Alert[] = missedInWeek >= 3
+          ? [
+              {
+                id: `adherence-${now.getTime()}`,
+                type: "adherence_warning" as const,
+                title: "Adherence Concern",
+                message: `You have ${missedInWeek} missed/unfinished doses in the last 7 days. Consider enabling more reminders.`,
+                priority: missedInWeek >= 6 ? "high" : "medium",
+                status: "active" as const,
+                createdAt: now.toISOString(),
+              } as Alert,
+            ]
+          : []
+
+        setAlerts([...overdueAlerts, ...upcomingAlerts, ...adherenceAlerts])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
   }, [])
 
-  const handleAcknowledge = (alertId: string) => {
+  const handleAcknowledge = async (alertId: string) => {
+    // Persist change for dose-backed alerts
+    try {
+      const target = alerts.find((a) => a.id === alertId)
+      if (target?.type === "missed_dose") {
+        await patchDose(alertId, { status: "skipped" })
+      } else if (target?.type === "medication_reminder") {
+        await patchDose(alertId, { status: "snoozed" })
+      }
+    } catch {}
     setAlerts((prev) =>
       prev.map((alert) =>
         alert.id === alertId
@@ -101,10 +170,18 @@ export default function AlertsPage() {
     })
   }
 
-  const handleAcknowledgeAll = () => {
+  const handleAcknowledgeAll = async () => {
     const activeAlerts = alerts.filter((alert) => alert.status === "active")
     if (activeAlerts.length === 0) return
-
+    try {
+      await Promise.all(
+        activeAlerts.map((a) => {
+          if (a.type === "missed_dose") return patchDose(a.id, { status: "skipped" })
+          if (a.type === "medication_reminder") return patchDose(a.id, { status: "snoozed" })
+          return Promise.resolve()
+        }),
+      )
+    } catch {}
     setAlerts((prev) =>
       prev.map((alert) =>
         alert.status === "active"
@@ -175,7 +252,7 @@ export default function AlertsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <NavBar title="Alerts" showThemeToggle />
+        <NavBar title="" showThemeToggle />
         <main className="px-4 py-6 pb-20 space-y-6">
           {/* Loading skeletons */}
           <div className="space-y-4">
@@ -199,8 +276,14 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <NavBar title="Alerts" showThemeToggle>
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      transition={{ duration: durations.md / 1000, ease: easing.enter }}
+      className="min-h-screen bg-background"
+    >
+      <NavBar title="" showThemeToggle>
         <div className="flex items-center space-x-2">
           {activeAlerts.length > 0 && (
             <Button variant="ghost" size="sm" onClick={handleAcknowledgeAll} className="btn-premium">
@@ -481,10 +564,28 @@ export default function AlertsPage() {
                                 </div>
                                 <p className="text-sm text-muted-foreground mb-2 text-pretty">{alert.message}</p>
                                 <div className="flex items-center space-x-4 text-xs text-muted-foreground">
-                                  <span>{new Date(alert.createdAt).toLocaleString()}</span>
+                                  <span>
+                                    {new Date(alert.createdAt).toLocaleString([], {
+                                      year: "numeric",
+                                      month: "short",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
                                   {alert.medicationName && <span>• {alert.medicationName}</span>}
                                   {alert.status === "acknowledged" && alert.acknowledgedAt && (
-                                    <span>• Resolved {new Date(alert.acknowledgedAt).toLocaleString()}</span>
+                                    <span>
+                                      • Resolved
+                                      {" "}
+                                      {new Date(alert.acknowledgedAt).toLocaleString([], {
+                                        year: "numeric",
+                                        month: "short",
+                                        day: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -513,6 +614,6 @@ export default function AlertsPage() {
 
       <TabBar />
       <VoiceMic />
-    </div>
+    </motion.div>
   )
 }

@@ -107,7 +107,7 @@ export default function SettingsPage() {
       setInstallPrompt(null)
       toast({
         title: "App installed successfully",
-        description: "MedTime is now available on your home screen",
+        description: "PillPal is now available on your home screen",
       })
     }
   }
@@ -211,7 +211,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <NavBar title="Settings" showThemeToggle />
+      <NavBar title="" showThemeToggle />
 
       <main className="px-4 py-6 pb-20">
         <motion.div
@@ -252,7 +252,7 @@ export default function SettingsPage() {
                     <div className="flex items-center space-x-3">
                       <Download className={cn("w-5 h-5", isDark ? "text-yellow-400" : "text-blue-600")} />
                       <div>
-                        <p className="font-medium text-foreground">Install MedTime</p>
+                        <p className="font-medium text-foreground">Install PillPal</p>
                         <p className="text-sm text-muted-foreground">Add to your home screen for quick access</p>
                       </div>
                     </div>
@@ -364,7 +364,9 @@ export default function SettingsPage() {
                             <p className="font-medium text-foreground">{setting.title}</p>
                             <p className="text-sm text-muted-foreground mt-1 text-pretty">{setting.description}</p>
                           </div>
-                          {setting.customControl || (
+                          {('customControl' in setting && setting.customControl) ? (
+                            setting.customControl
+                          ) : (
                             <ToggleSwitch
                               checked={settings[setting.key as keyof typeof settings]}
                               onChange={(checked) => updateSetting(setting.key, checked)}

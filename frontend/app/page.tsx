@@ -80,7 +80,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <NavBar title="MedTime" />
+        <NavBar title="" />
         <main className="px-4 py-6 pb-20 space-y-6">
           {/* Loading skeletons */}
           <div className="space-y-4">
@@ -101,7 +101,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <NavBar title="MedTime" showThemeToggle />
+      <NavBar title="" showThemeToggle />
 
       <main className="px-4 py-6 pb-20">
         <motion.div

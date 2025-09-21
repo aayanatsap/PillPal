@@ -134,7 +134,7 @@ export default function MedicationsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <NavBar title="Medications" showThemeToggle />
+        <NavBar title="" showThemeToggle />
         <main className="px-4 py-6 pb-20 space-y-6">
           {/* Loading skeletons */}
           <div className="space-y-4">
@@ -155,7 +155,7 @@ export default function MedicationsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <NavBar title="Medications" showThemeToggle>
+      <NavBar title="" showThemeToggle>
         <Button variant="default" size="sm" onClick={() => setShowAddModal(true)} className="btn-premium">
           <Plus className="w-4 h-4 mr-1" />
           <span className="hidden sm:inline">Add</span>

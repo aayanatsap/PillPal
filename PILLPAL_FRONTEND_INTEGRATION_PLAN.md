@@ -2,7 +2,7 @@
 
 This document describes how to integrate the new Next.js frontend located in `pillpal-mvp/` with the existing FastAPI backend in `backend/` using the agreed tech stack (Auth0, Supabase Postgres, Google Gemini, Twilio, Vercel/Cloud Run).
 
-### 1) Frontend overview (pillpal-mvp)
+### 1) Frontend overview (pillpal-mvp) COMPLETED
 - App Router pages in `pillpal-mvp/app/`:
   - `page.tsx` (Dashboard)
   - `alerts/`, `caregiver/`, `clinician/`, `meds/`, `meds/new/`, `schedule/`, `settings/` (each has `page.tsx` and some `loading.tsx`)
@@ -47,14 +47,6 @@ NEXT_PUBLIC_GOOGLE_API_KEY=...
 ```
 
 Backend `backend/.env` (already configured): Auth0 issuer/audience, Supabase, Gemini, Twilio, CORS for `http://localhost:3000`.
-
-### 4) Code moves and structure
-Option A (recommended): Replace existing `frontend/` with `pillpal-mvp/` content (rename/move), then:
-- Ensure `package.json` includes `@auth0/nextjs-auth0` and `jose`
-- Ensure Tailwind v4 and PostCSS config are aligned (already in `pillpal-mvp`)
-- Ensure `tsconfig.json` uses alias `@/* -> src/*` (or update imports to match final layout)
-
-Option B: Keep `pillpal-mvp/` as-is temporarily and run it directly for UI work, then migrate into `frontend/` when wiring is complete.
 
 ### 5) Auth0 wiring (App Router) — COMPLETED
 1. Provider: Wrap root layout with `Auth0Provider` (client component). If keeping existing layout from `pillpal-mvp/app/layout.tsx`, add the provider around `children`.

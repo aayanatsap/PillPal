@@ -64,7 +64,7 @@ export function EncouragementCard({ completionRate, streak = 0, className }: Enc
     >
       <Card
         className={cn(
-          "p-6 border-l-4 transition-all duration-300 ease-out",
+          "p-6 border-l-4 transition-all duration-300 ease-out glass-3d hover-lift press-compress",
           isAllComplete && isDark && "border-l-yellow-400",
           isAllComplete && !isDark && "border-l-yellow-600",
           isHighPerformance && !isAllComplete && isDark && "border-l-teal-400",

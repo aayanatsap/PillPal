@@ -109,13 +109,13 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
       }}
       className={cn(
         "motion-safe:transition-all motion-safe:duration-300",
-        dose.status === "taken" && "animate-[successWash_0.6s_ease-out]",
-        dose.status === "skipped" && "animate-[skipWash_0.6s_ease-out]",
+        dose.status === "taken" && "animate-[successWash_240ms_ease-out]",
+        dose.status === "skipped" && "animate-[skipWash_240ms_ease-out]",
       )}
     >
       <Card
         className={cn(
-          "p-4 border-2 transition-all duration-300 ease-out",
+          "p-4 border-2 transition-all duration-300 ease-out glass-3d hover-lift press-compress",
           statusConfig.cardBorder,
           isDueSoon && !prefersReducedMotion && "animate-[breathGlow_2s_ease-in-out_infinite]",
           isDueSoon && "shadow-lg",
@@ -245,7 +245,7 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
             animate={{ opacity: 1, height: "auto" }}
             transition={{ duration: durations.sm / 1000 }}
           >
-            {dose.status === "taken" && `Taken at ${dose.takenAt}`}
+            {dose.status === "taken" && `Taken at ${new Date(dose.takenAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', year: 'numeric', month: 'short', day: 'numeric' })}`}
           </motion.div>
         )}
 

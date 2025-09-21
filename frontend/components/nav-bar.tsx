@@ -1,6 +1,8 @@
 "use client"
 
 import type React from "react"
+import Image from "next/image"
+import Link from "next/link"
 import { motion } from "framer-motion"
 import { useMotion } from "./motion-provider"
 import { ThemeToggle } from "./theme-toggle"
@@ -33,7 +35,15 @@ export function NavBar({ title, className, children, showThemeToggle = false }: 
       )}
     >
       <div className="flex h-14 items-center justify-between px-4">
-        <h1 className="font-heading text-lg font-semibold text-foreground">{title}</h1>
+        <div className="flex items-center space-x-2">
+          <Link href="/" aria-label="PillPal Home" className="inline-flex items-center space-x-2">
+            <Image src="/pillpal-logo.png" alt="PillPal logo" width={150} height={150} priority />
+            <span className="sr-only">PillPal</span>
+          </Link>
+          {title && title.trim().length > 0 && (
+            <h1 className="font-heading text-lg font-semibold text-foreground">{title}</h1>
+          )}
+        </div>
         <div className="flex items-center space-x-2">
           {children}
           {showThemeToggle && <ThemeToggle size="sm" />}

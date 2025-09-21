@@ -1,10 +1,14 @@
 "use client"
 
+import React from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Toast, ToastClose, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast"
 
 export function Toaster() {
   const { toasts } = useToast()
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+  if (!mounted) return null
 
   return (
     <ToastProvider>

@@ -22,7 +22,7 @@ export interface Medication {
   created_at: string
 }
 
-export interface MedTime {
+export interface PillPalMedTime {
   id: UUID
   medication_id: UUID
   time_of_day: string // HH:MM:SS

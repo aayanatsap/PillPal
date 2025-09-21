@@ -7,10 +7,13 @@ export interface ApiErrorShape {
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = `/api/proxy${path.startsWith('/') ? path : `/${path}`}`
+  // Attach client time zone so backend can compute schedules server-side in user's local time
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   const res = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Timezone': tz,
       ...(init.headers || {}),
     },
   })

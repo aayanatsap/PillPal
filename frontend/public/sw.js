@@ -1,6 +1,6 @@
-const CACHE_NAME = "medtime-v1.1.0"
-const STATIC_CACHE = "medtime-static-v1.1.0"
-const DYNAMIC_CACHE = "medtime-dynamic-v1.1.0"
+const CACHE_NAME = "pillpal-v1.1.0"
+const STATIC_CACHE = "pillpal-static-v1.1.0"
+const DYNAMIC_CACHE = "pillpal-dynamic-v1.1.0"
 
 // Assets to cache immediately
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon-192.jpg", "/icon-512.jpg", "/offline.html"]
@@ -192,7 +192,7 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  event.waitUntil(self.registration.showNotification("MedTime Reminder", options))
+  event.waitUntil(self.registration.showNotification("PillPal Reminder", options))
 })
 
 // Handle notification clicks

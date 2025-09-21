@@ -83,7 +83,7 @@ export function RiskBadge({ score, level, className }: RiskBadgeProps) {
 
   return (
     <motion.div
-      className={cn("glass-card p-4", className)}
+      className={cn("glass-card glass-3d hover-lift press-compress p-4", className)}
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{
@@ -123,8 +123,8 @@ export function RiskBadge({ score, level, className }: RiskBadgeProps) {
               className={riskConfig.ringColor}
               strokeLinecap="round"
               strokeDasharray={strokeDasharray}
-              initial={{ strokeDashoffset: circumference }}
-              animate={{ strokeDashoffset }}
+              initial={{ pathLength: 0, strokeDashoffset: circumference }}
+              animate={{ pathLength: 1, strokeDashoffset }}
               transition={{
                 duration: prefersReducedMotion ? 0 : 1.5,
                 ease: easing.enter,
@@ -138,9 +138,8 @@ export function RiskBadge({ score, level, className }: RiskBadgeProps) {
             <motion.span
               className={cn("text-xl font-bold font-heading", riskConfig.color)}
               key={displayScore}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.2 }}
+              initial={{ y: 8, opacity: 0 }}
+              animate={{ y: 0, opacity: 1, transition: { duration: 0.25 } }}
             >
               {displayScore}
             </motion.span>

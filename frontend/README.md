@@ -1,30 +1,28 @@
-# Voice First Web App
+# PillPal
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+PillPal is a calm, voice-assisted medication companion for patients, caregivers, and clinicians.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/team67steelhacks-8510s-projects/v0-voice-first-web-app)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/KMEVPLlVo20)
+## Getting started
 
-## Overview
+```bash
+pnpm install
+pnpm dev
+```
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
+## Environment
+
+Create a .env.local with your configuration:
+
+```
+NEXT_PUBLIC_API_URL=...
+AUTH0_SECRET=...
+AUTH0_BASE_URL=...
+AUTH0_ISSUER_BASE_URL=...
+AUTH0_CLIENT_ID=...
+AUTH0_CLIENT_SECRET=...
+NEXT_PUBLIC_SITE_URL=https://pillpal.app
+```
 
 ## Deployment
 
-Your project is live at:
-
-**[https://vercel.com/team67steelhacks-8510s-projects/v0-voice-first-web-app](https://vercel.com/team67steelhacks-8510s-projects/v0-voice-first-web-app)**
-
-## Build your app
-
-Continue building your app on:
-
-**[https://v0.app/chat/projects/KMEVPLlVo20](https://v0.app/chat/projects/KMEVPLlVo20)**
-
-## How It Works
-
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+Deploy on your preferred platform. This is a Next.js App Router app with a PWA manifest and service worker.

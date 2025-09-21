@@ -6,9 +6,10 @@ import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { MotionProvider } from "@/components/motion-provider"
 import { ThemeProvider } from "@/components/theme-provider"
-import { Toaster } from "@/components/ui/toaster"
+import ClientToaster from "@/app/client-toaster"
 import { Suspense } from "react"
-import { Auth0Provider } from "@auth0/nextjs-auth0"
+// Auth0Provider is a Client Component; wrap it behind a client boundary component
+import ClientProviders from "@/app/providers"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,12 +24,29 @@ const plusJakarta = Plus_Jakarta_Sans({
 })
 
 export const metadata: Metadata = {
-  title: "MedTime - Voice-First Medication Management",
+  title: "PillPal - Medication Assistant",
   description: "Premium, calm medication tracking with voice assistance",
-  generator: "v0.app",
   viewport: "width=device-width, initial-scale=1, viewport-fit=cover",
-  themeColor: "#0D0D0D",
+  themeColor: "#0B1220",
   manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icon-192.jpg", sizes: "192x192", type: "image/jpeg" },
+      { url: "/icon-512.jpg", sizes: "512x512", type: "image/jpeg" },
+    ],
+    apple: "/icon-192.jpg",
+  },
+  openGraph: {
+    title: "PillPal",
+    description: "Medication reminders and tracking with a calm, voice-first experience",
+    url: "https://pillpal.app",
+    siteName: "PillPal",
+    images: [
+      { url: "/icon-512.jpg", width: 512, height: 512 },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
 }
 
 export default function RootLayout({
@@ -40,8 +58,23 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} ${plusJakarta.variable}`} suppressHydrationWarning>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <meta name="theme-color" content="#0D0D0D" media="(prefers-color-scheme: dark)" />
+        <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)" />
         <meta name="theme-color" content="#F9FAFB" media="(prefers-color-scheme: light)" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                const c = document.documentElement.classList;
+                const stored = localStorage.getItem('theme');
+                if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                  c.add('dark');
+                } else {
+                  c.remove('dark');
+                }
+              })();
+            `,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -61,16 +94,16 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased min-h-screen">
-        <Auth0Provider>
+        <ClientProviders>
           <Suspense fallback={null}>
             <ThemeProvider>
               <MotionProvider>
                 {children}
-                <Toaster />
+                <ClientToaster />
               </MotionProvider>
             </ThemeProvider>
           </Suspense>
-        </Auth0Provider>
+        </ClientProviders>
         <Analytics />
       </body>
     </html>

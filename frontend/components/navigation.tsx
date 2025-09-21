@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Home, Pill, Users, AlertTriangle, Settings } from "lucide-react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -46,10 +47,9 @@ export function Navigation() {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <Pill className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-xl font-semibold text-neutral-700">MedCare</span>
+            <Link href="/" aria-label="PillPal Home" className="inline-flex items-center">
+              <Image src="/pillpal-logo.png" alt="PillPal logo" width={40} height={40} priority />
+            </Link>
           </div>
 
           <div className="hidden md:flex items-center space-x-1">

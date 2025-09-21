@@ -13,6 +13,7 @@ import { RiskBadge } from "@/components/risk-badge"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { cn } from "@/lib/utils"
+import { getUserMe, getDosesToday, type ApiDose } from "@/lib/api"
 
 interface Patient {
   id: string
@@ -51,61 +52,127 @@ export default function CaregiverPage() {
   const { isDark } = useTheme()
 
   useEffect(() => {
-    // Mock data loading
-    setTimeout(() => {
-      setData({
-        patient: {
-          id: "1",
-          name: "",
-          riskLevel: "Low",
-          riskScore: 85,
-          avatar: "/elderly-woman-smiling.png",
-        },
-        adherenceRate: 92,
-        todaysDoses: { taken: 2, total: 3 },
-        weeklyTrend: 5,
-        lastContact: "2024-01-14T10:30:00Z",
-        isOnline: true,
-        recentActivity: [
-          {
-            id: "1",
-            type: "dose_taken",
-            title: "Dose Taken",
-            description: "Lisinopril 10mg taken on time",
-            timestamp: "2024-01-15T08:05:00Z",
-            medicationName: "Lisinopril",
-            status: "success",
-          },
-          {
-            id: "2",
-            type: "dose_missed",
-            title: "Missed Dose",
-            description: "Metformin 500mg - 30 minutes overdue",
-            timestamp: "2024-01-15T12:30:00Z",
-            medicationName: "Metformin",
-            status: "error",
-          },
-          {
-            id: "3",
-            type: "dose_snoozed",
-            title: "Dose Snoozed",
-            description: "Atorvastatin 20mg snoozed for 15 minutes",
-            timestamp: "2024-01-14T20:15:00Z",
-            medicationName: "Atorvastatin",
-            status: "warning",
-          },
-          {
-            id: "4",
+    const load = async () => {
+      try {
+        const [user, doses] = await Promise.all([getUserMe(), getDosesToday()])
+
+        const now = new Date()
+        const startOfToday = new Date(now)
+        startOfToday.setHours(0, 0, 0, 0)
+        const endOfToday = new Date(now)
+        endOfToday.setHours(23, 59, 59, 999)
+
+        const isToday = (iso: string) => {
+          const d = new Date(iso)
+          return d >= startOfToday && d <= endOfToday
+        }
+
+        // Build recent activity (last 10 items by scheduled_at desc)
+        const recentSorted = [...doses].sort(
+          (a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime(),
+        )
+        const recentActivity = recentSorted.slice(0, 10).map<ActivityItem>((d) => {
+          const med = d.medication_name || "Medication"
+          const common = {
+            id: d.id,
+            timestamp: d.taken_at || d.scheduled_at,
+            medicationName: med,
+          }
+          if (d.status === "taken") {
+            return {
+              ...common,
+              type: "dose_taken",
+              title: "Dose Taken",
+              description: `${med} taken`,
+              status: "success",
+            }
+          }
+          if (d.status === "snoozed") {
+            return {
+              ...common,
+              type: "dose_snoozed",
+              title: "Dose Snoozed",
+              description: `${med} snoozed`,
+              status: "warning",
+            }
+          }
+          if (d.status === "skipped") {
+            return {
+              ...common,
+              type: "dose_missed",
+              title: "Dose Skipped",
+              description: `${med} marked as skipped`,
+              status: "error",
+            }
+          }
+          // pending
+          return {
+            ...common,
             type: "alert_triggered",
-            title: "Adherence Alert",
-            description: "Weekly adherence dropped below 90%",
-            timestamp: "2024-01-14T09:00:00Z",
+            title: "Upcoming Dose",
+            description: `${med} due at ${new Date(d.scheduled_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`,
             status: "warning",
+          }
+        })
+
+        // Today's stats
+        const todays = doses.filter((d) => isToday(d.scheduled_at))
+        const takenToday = todays.filter((d) => d.status === "taken").length
+        const totalToday = todays.length
+        const adherenceToday = totalToday > 0 ? Math.round((takenToday / totalToday) * 100) : 0
+
+        // 7-day adherence and trend vs prior 7 days
+        const start7 = new Date(now)
+        start7.setDate(now.getDate() - 6)
+        start7.setHours(0, 0, 0, 0)
+        const endPrev7 = new Date(start7)
+        endPrev7.setDate(start7.getDate() - 1)
+        endPrev7.setHours(23, 59, 59, 999)
+        const startPrev7 = new Date(endPrev7)
+        startPrev7.setDate(endPrev7.getDate() - 6)
+        startPrev7.setHours(0, 0, 0, 0)
+
+        const inRange = (iso: string, start: Date, end: Date) => {
+          const d = new Date(iso)
+          return d >= start && d <= end
+        }
+
+        const last7 = doses.filter((d) => inRange(d.scheduled_at, start7, endOfToday))
+        const taken7 = last7.filter((d) => d.status === "taken").length
+        const rate7 = last7.length > 0 ? Math.round((taken7 / last7.length) * 100) : adherenceToday
+
+        const prev7 = doses.filter((d) => inRange(d.scheduled_at, startPrev7, endPrev7))
+        const prevTaken7 = prev7.filter((d) => d.status === "taken").length
+        const prevRate7 = prev7.length > 0 ? Math.round((prevTaken7 / prev7.length) * 100) : rate7
+        const weeklyTrend = rate7 - prevRate7
+
+        const riskLevel: Patient["riskLevel"] = rate7 >= 80 ? "Low" : rate7 >= 50 ? "Medium" : "High"
+        const lastTaken = recentSorted.find((d) => d.status === "taken")
+
+        setData({
+          patient: {
+            id: user.id,
+            name: user.name && user.name.trim().length > 0 ? user.name : "You",
+            riskLevel,
+            riskScore: rate7,
+            avatar: undefined,
           },
-        ],
-      })
-      setLoading(false)
-    }, 800)
+          adherenceRate: rate7,
+          todaysDoses: { taken: takenToday, total: totalToday },
+          weeklyTrend,
+          lastContact: lastTaken?.taken_at || lastTaken?.scheduled_at || new Date().toISOString(),
+          isOnline: true,
+          recentActivity,
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
   }, [])
 
   const getActivityConfig = (activity: ActivityItem) => {
@@ -137,7 +204,7 @@ export default function CaregiverPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <NavBar title="Caregiver" showThemeToggle />
+        <NavBar title="" showThemeToggle />
         <main className="px-4 py-6 pb-20 space-y-6">
           {/* Loading skeletons */}
           <div className="space-y-4">
@@ -163,7 +230,7 @@ export default function CaregiverPage() {
   if (!data) {
     return (
       <div className="min-h-screen bg-background">
-        <NavBar title="Caregiver" showThemeToggle />
+        <NavBar title="" showThemeToggle />
         <main className="px-4 py-6 pb-20">
           <Card className="p-8 text-center transition-all duration-300 ease-out">
             <p className="text-muted-foreground">Failed to load caregiver data</p>
@@ -177,7 +244,7 @@ export default function CaregiverPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <NavBar title="Caregiver" showThemeToggle>
+      <NavBar title="" showThemeToggle>
         <div className="flex items-center space-x-2">
           <div className="flex items-center bg-muted/20 rounded-lg p-1">
             <Button
@@ -245,7 +312,10 @@ export default function CaregiverPage() {
               <div className="flex items-center space-x-3">
                 <div className="relative">
                   <img
-                    src={data.patient.avatar || "/placeholder.svg?height=48&width=48&query=patient avatar"}
+                    src={
+                      data.patient.avatar ||
+                      `https://ui-avatars.com/api/?name=${encodeURIComponent(data.patient.name || 'Patient')}&background=0D8ABC&color=fff&size=48&format=svg`
+                    }
                     alt={data.patient.name}
                     className="w-12 h-12 rounded-xl object-cover"
                   />
@@ -256,7 +326,7 @@ export default function CaregiverPage() {
                 <div>
                   <p className="font-heading text-lg font-semibold text-foreground">{data.patient.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    Last contact: {new Date(data.lastContact).toLocaleDateString()}
+                    Last contact: {new Date(data.lastContact).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </p>
                 </div>
               </div>
@@ -480,7 +550,15 @@ export default function CaregiverPage() {
                                 </div>
                                 <p className="text-sm text-muted-foreground mb-2 text-pretty">{activity.description}</p>
                                 <div className="flex items-center space-x-4 text-xs text-muted-foreground">
-                                  <span>{new Date(activity.timestamp).toLocaleTimeString()}</span>
+                                  <span>
+                                    {new Date(activity.timestamp).toLocaleString([], {
+                                      year: 'numeric',
+                                      month: 'short',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
                                   {activity.medicationName && <span>• {activity.medicationName}</span>}
                                 </div>
                               </div>
