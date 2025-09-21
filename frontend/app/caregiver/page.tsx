@@ -9,11 +9,14 @@ import { Badge } from "@/components/ui/badge"
 import { NavBar } from "@/components/nav-bar"
 import { TabBar } from "@/components/tab-bar"
 import { VoiceMic } from "@/components/voice-mic"
-import { RiskBadge } from "@/components/risk-badge"
+import { RiskBadgeAuto } from "@/components/risk-badge"
+import RiskInsightCard from "../../components/risk-insight-card"
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend } from 'recharts'
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { cn } from "@/lib/utils"
-import { getUserMe, getDosesToday, type ApiDose } from "@/lib/api"
+import { getUserMe, getDosesToday, type ApiDose, sendInsightsSms } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface Patient {
   id: string
@@ -38,20 +41,34 @@ interface CaregiverData {
   adherenceRate: number
   todaysDoses: { taken: number; total: number }
   weeklyTrend: number
+  adherenceSeries: Array<{ date: string; adherence: number }>
   recentActivity: ActivityItem[]
   lastContact: string
   isOnline: boolean
+  patientPhone?: string | null
 }
 
 export default function CaregiverPage() {
   const [data, setData] = useState<CaregiverData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authorized, setAuthorized] = useState(false)
+  const [pwd, setPwd] = useState("")
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0])
   const [viewMode, setViewMode] = useState<"overview" | "activity">("overview")
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
+  const { toast } = useToast()
 
   useEffect(() => {
+    // Restore local auth
+    try {
+      const saved = typeof window !== 'undefined' ? window.localStorage.getItem('caregiverAuth') : null
+      if (saved === '1') setAuthorized(true)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (!authorized) return
     const load = async () => {
       try {
         const [user, doses] = await Promise.all([getUserMe(), getDosesToday()])
@@ -152,6 +169,21 @@ export default function CaregiverPage() {
         const riskLevel: Patient["riskLevel"] = rate7 >= 80 ? "Low" : rate7 >= 50 ? "Medium" : "High"
         const lastTaken = recentSorted.find((d) => d.status === "taken")
 
+        // Build 7-day adherence series (each day 0..100, using available doses for that day)
+        const series: Array<{ date: string; adherence: number }> = []
+        for (let i = 6; i >= 0; i--) {
+          const day = new Date(now)
+          day.setDate(now.getDate() - i)
+          day.setHours(0, 0, 0, 0)
+          const dayStart = new Date(day)
+          const dayEnd = new Date(day)
+          dayEnd.setHours(23, 59, 59, 999)
+          const dayDoses = doses.filter((d) => inRange(d.scheduled_at, dayStart, dayEnd))
+          const dayTaken = dayDoses.filter((d) => d.status === "taken").length
+          const dayRate = dayDoses.length > 0 ? Math.round((dayTaken / dayDoses.length) * 100) : 0
+          series.push({ date: day.toISOString().slice(0, 10), adherence: dayRate })
+        }
+
         setData({
           patient: {
             id: user.id,
@@ -163,9 +195,11 @@ export default function CaregiverPage() {
           adherenceRate: rate7,
           todaysDoses: { taken: takenToday, total: totalToday },
           weeklyTrend,
+          adherenceSeries: series,
           lastContact: lastTaken?.taken_at || lastTaken?.scheduled_at || new Date().toISOString(),
           isOnline: true,
           recentActivity,
+          patientPhone: user.phone_enc || null,
         })
       } finally {
         setLoading(false)
@@ -173,7 +207,43 @@ export default function CaregiverPage() {
     }
 
     load()
-  }, [])
+  }, [authorized])
+
+  const handleAuthorize = () => {
+    if (pwd === 'Caregiver') {
+      setAuthorized(true)
+      try { if (typeof window !== 'undefined') window.localStorage.setItem('caregiverAuth', '1') } catch {}
+    } else {
+      toast({ title: 'Incorrect password', description: 'Please try again.', variant: 'destructive' })
+    }
+  }
+  if (!authorized) {
+    return (
+      <div className="min-h-screen bg-background">
+        <NavBar title="" showThemeToggle />
+        <main className="px-4 py-10 pb-20 max-w-md mx-auto">
+          <Card className="p-6 glass-card space-y-6">
+            <div className="text-center space-y-3">
+              <h1 className="font-heading text-xl font-semibold text-foreground">Caregiver Access</h1>
+              <p className="text-sm text-muted-foreground">Enter the caregiver password to view this panel.</p>
+            </div>
+            <input
+              type="password"
+              value={pwd}
+              onChange={(e) => setPwd(e.target.value)}
+              placeholder="Password"
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-yellow-400"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAuthorize() }}
+            />
+            <div className="flex justify-end">
+              <Button onClick={handleAuthorize}>Enter</Button>
+            </div>
+          </Card>
+        </main>
+        <TabBar />
+      </div>
+    )
+  }
 
   const getActivityConfig = (activity: ActivityItem) => {
     const baseConfig = {
@@ -332,7 +402,7 @@ export default function CaregiverPage() {
               </div>
             </Card>
 
-            <RiskBadge score={data.patient.riskScore} level={data.patient.riskLevel} />
+            <RiskInsightCard />
           </motion.div>
 
           <AnimatePresence mode="wait">
@@ -426,6 +496,45 @@ export default function CaregiverPage() {
                   </Card>
                 </motion.div>
 
+                {/* Adherence trend (7d) */}
+                <Card className="p-4 glass-card transition-all duration-300 ease-out">
+                  <h3 className="font-heading text-lg font-semibold text-foreground mb-3">Adherence Trend</h3>
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={data.adherenceSeries}>
+                        <defs>
+                          <linearGradient id="adhGradient" x1="0" y1="0" x2="1" y2="0">
+                            {data.adherenceSeries.map((p, idx) => {
+                              const pct = data.adherenceSeries.length > 1 ? (idx/(data.adherenceSeries.length-1))*100 : 0
+                              const hue = Math.max(0, Math.min(120, (p.adherence/100)*120))
+                              const color = `hsl(${hue}, 85%, 55%)`
+                              return <stop key={idx} offset={`${pct}%`} stopColor={color} />
+                            })}
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                        <XAxis dataKey="date" tickFormatter={(v) => new Date(v).toLocaleDateString(undefined,{month:'short',day:'numeric'})} stroke="currentColor" opacity={0.4} />
+                        <YAxis domain={[0,100]} tickCount={6} stroke="currentColor" opacity={0.4} />
+                        <Tooltip formatter={(v: number)=>[`${v}%`, 'adherence']} contentStyle={{ background: 'rgba(0,0,0,0.7)', border: 'none', borderRadius: 8 }} labelFormatter={(v)=>new Date(v).toLocaleDateString()} />
+                        <Line
+                          type="monotone"
+                          dataKey="adherence"
+                          connectNulls
+                          stroke="url(#adhGradient)"
+                          strokeWidth={3}
+                          dot={(props: any) => {
+                            const { cx, cy, payload, index } = props as { cx: number; cy: number; payload: { adherence: number }; index: number }
+                            const hue = Math.max(0, Math.min(120, (payload.adherence/100)*120))
+                            const color = `hsl(${hue}, 85%, 55%)`
+                            return <circle key={`dot-${index}-${payload?.adherence}`} cx={cx} cy={cy} r={4} fill={color} stroke="#fff" strokeWidth={1} />
+                          }}
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
                 {/* Quick actions */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
@@ -435,34 +544,49 @@ export default function CaregiverPage() {
                   <Card className="p-6 glass-card transition-all duration-300 ease-out">
                     <h3 className="font-heading text-lg font-semibold text-foreground mb-4">Quick Actions</h3>
                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                      <Button
-                        variant="outline"
-                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium"
+                      <a
+                        href={data.patientPhone ? `tel:${data.patientPhone}` : undefined}
+                        onClick={(e) => { if (!data.patientPhone) { e.preventDefault(); toast({ title: 'Missing phone number', description: 'Add a phone in Settings to call the patient.' }) } }}
+                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium border rounded-md px-4 py-2 text-sm"
+                        role="button"
                       >
                         <Phone className="w-4 h-4" />
                         <span>Call Patient</span>
-                      </Button>
+                      </a>
                       <Button
                         variant="outline"
                         className="flex items-center space-x-2 justify-start bg-transparent btn-premium"
+                        onClick={async () => {
+                          try {
+                            await sendInsightsSms()
+                            toast({ title: 'Message sent', description: 'Insights and reminders sent via SMS.' })
+                          } catch (e) {
+                            toast({ title: 'Failed to send', description: 'Could not send SMS. Check AWS SNS configuration and phone number.', variant: 'destructive' })
+                          }
+                        }}
                       >
                         <MessageCircle className="w-4 h-4" />
                         <span>Send Message</span>
                       </Button>
-                      <Button
-                        variant="outline"
-                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium"
+                      <a
+                        href="https://meet.google.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium border rounded-md px-4 py-2 text-sm"
+                        role="button"
                       >
                         <Video className="w-4 h-4" />
                         <span>Video Call</span>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium"
+                      </a>
+                      <a
+                        href="/api/proxy/api/v1/export/adherence.csv"
+                        download
+                        className="flex items-center space-x-2 justify-start bg-transparent btn-premium border rounded-md px-4 py-2 text-sm"
+                        role="button"
                       >
                         <FileText className="w-4 h-4" />
                         <span>View Reports</span>
-                      </Button>
+                      </a>
                     </div>
                   </Card>
                 </motion.div>

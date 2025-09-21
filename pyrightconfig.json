@@ -1,0 +1,9 @@
+{
+  "venvPath": "/Volumes/Film_SSD/SteelHacks/PillPal/backend",
+  "venv": ".venv",
+  "include": [
+    "backend/app"
+  ]
+}
+
+

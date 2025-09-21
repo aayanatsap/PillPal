@@ -1,15 +1,19 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import os
 from .security import verify_jwt
 from .database import get_db, supabase
 from .models import User, Medication, MedTime, Dose, DoseStatus, UserRole
 from .gemini_service import gemini_service
-from .twilio_service import twilio_service
+from .sns_service import sns_service
 from sqlalchemy.orm import Session
+from typing import Dict, Any
+import io
+import csv
 
 app = FastAPI(title="PillPal API", version="0.1.0")
 
@@ -41,6 +45,7 @@ class UserResponse(BaseModel):
     auth0_sub: str
     name: str
     role: UserRole
+    phone_enc: Optional[str] = None
     created_at: datetime
 
 class UserUpdate(BaseModel):
@@ -184,6 +189,311 @@ async def risk_for_user(_claims: dict = Depends(verify_jwt)):
     return {"score": 0}
 
 
+# ---------- Risk scoring (Gemini) ----------
+
+class RiskOut(BaseModel):
+    score_0_100: int
+    bucket: str
+    rationale: str
+    suggestion: str
+    contributing_factors: List[str] = []
+
+class RiskInsights(BaseModel):
+    title: str
+    highlights: List[str] = []
+    advice: str
+    next_best_action: str
+    misses_7d: int | None = None
+    snoozes_7d: int | None = None
+    top_missed_block: Optional[str] = None
+
+
+async def _compute_features_for_user_today(user_id: str) -> Dict[str, Any]:
+    """Compute derived, non-PHI features from Supabase tables for the current user."""
+    now = datetime.utcnow()
+    start_today = datetime(now.year, now.month, now.day)
+    end_today = datetime(now.year, now.month, now.day, 23, 59, 59)
+
+    def _block(dt_iso: str) -> str:
+        try:
+            hh = int(dt_iso[11:13])
+        except Exception:
+            return "morning"
+        if 5 <= hh < 12:
+            return "morning"
+        if 12 <= hh < 17:
+            return "midday"
+        if 17 <= hh < 21:
+            return "evening"
+        return "night"
+
+    # Last 7 days doses
+    start7 = datetime.utcnow() - timedelta(days=6)
+    try:
+        # Pull all doses for last 7 days
+        res7 = (
+            supabase
+            .table("doses")
+            .select("id, scheduled_at, status, taken_at, medication_id")
+            .eq("user_id", user_id)
+            .gte("scheduled_at", start7.isoformat())
+            .execute()
+        )
+        rows7 = res7.data or []
+    except Exception:
+        rows7 = []
+
+    taken7 = [r for r in rows7 if r.get("status") == "taken"]
+    adherence_7d = (len(taken7) / len(rows7)) if rows7 else 0.0
+
+    # Streak: consecutive days with 100% adherence
+    streak_taken_days = 0
+    by_day: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows7:
+        dkey = (r["scheduled_at"] or "")[:10]
+        by_day.setdefault(dkey, []).append(r)
+    for i in range(0, 7):
+        d = (start7 + timedelta(days=i)).strftime("%Y-%m-%d")
+        day_rows = by_day.get(d, [])
+        if day_rows and all(rr.get("status") == "taken" for rr in day_rows):
+            streak_taken_days += 1
+        else:
+            streak_taken_days = 0
+
+    # Recent misses/snoozes
+    t48 = datetime.utcnow() - timedelta(hours=48)
+    misses_48h = len([
+        r for r in rows7
+        if r.get("status") in ("skipped", "missed") and (r.get("scheduled_at") or "") >= t48.isoformat()
+    ])
+    snoozes_24h = len([r for r in rows7 if r.get("status") == "snoozed" and (r.get("scheduled_at") or "") >= (datetime.utcnow() - timedelta(hours=24)).isoformat()])
+
+    # Today doses
+    try:
+        today_res = (
+            supabase
+            .table("doses")
+            .select("id, scheduled_at, status, taken_at")
+            .eq("user_id", user_id)
+            .gte("scheduled_at", start_today.isoformat())
+            .lte("scheduled_at", end_today.isoformat())
+            .execute()
+        )
+        today_rows = today_res.data or []
+    except Exception:
+        today_rows = []
+    dose_count_today = len(today_rows)
+
+    # Complexity: average distinct meds per day in last week
+    try:
+        meds_res = (
+            supabase
+            .table("medications")
+            .select("id")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        med_ids = {m["id"] for m in (meds_res.data or [])}
+        complexity = max(0, len(med_ids))
+    except Exception:
+        complexity = 0
+
+    # Age band unavailable; set unknown
+    age_band = "unknown"
+
+    # Last taken delta and time to next
+    last_taken_delta_min = None
+    time_to_next_min = None
+    try:
+        last_taken = max(
+            [r for r in rows7 if r.get("status") == "taken"],
+            key=lambda r: r.get("taken_at") or r.get("scheduled_at") or "",
+        ) if rows7 else None
+        if last_taken:
+            ts = last_taken.get("taken_at") or last_taken.get("scheduled_at")
+            if ts:
+                tdt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                last_taken_delta_min = int((datetime.utcnow() - tdt.replace(tzinfo=None)).total_seconds() // 60)
+    except Exception:
+        pass
+    try:
+        upcoming = min(
+            [r for r in rows7 if (r.get("status") in ("pending", "snoozed")) and r.get("scheduled_at")],
+            key=lambda r: r.get("scheduled_at"),
+        ) if rows7 else None
+        if upcoming and upcoming.get("scheduled_at"):
+            ndt = datetime.fromisoformat(upcoming["scheduled_at"].replace("Z", "+00:00"))
+            time_to_next_min = int((ndt.replace(tzinfo=None) - datetime.utcnow()).total_seconds() // 60)
+    except Exception:
+        pass
+
+    # Caregiver acknowledgments in 7d
+    try:
+        acks_res = (
+            supabase
+            .table("alerts")
+            .select("id, ack_at")
+            .gte("ack_at", start7.isoformat())
+            .execute()
+        )
+        caregiver_ack_7d = len(acks_res.data or [])
+    except Exception:
+        caregiver_ack_7d = 0
+
+    now_block = _block(datetime.utcnow().isoformat())
+    weekday = datetime.utcnow().weekday()
+
+    return {
+        "adherence_7d": round(adherence_7d, 3),
+        "streak_taken_days": streak_taken_days,
+        "misses_48h": misses_48h,
+        "snoozes_24h": snoozes_24h,
+        "dose_count_today": dose_count_today,
+        "now_block": now_block,
+        "weekday": weekday,
+        "complexity": complexity,
+        "age_band": age_band,
+        "last_taken_delta_min": last_taken_delta_min,
+        "time_to_next_min": time_to_next_min,
+        "caregiver_ack_7d": caregiver_ack_7d,
+    }
+
+
+@app.get("/api/v1/risk/today", response_model=RiskOut)
+async def risk_today(claims: dict = Depends(verify_jwt)):
+    user_id = await get_or_create_user(claims)
+    features = await _compute_features_for_user_today(user_id)
+    # Ask Gemini
+    result = await gemini_service.score_adherence_risk(features)
+    if "error" in result:
+        # Fallback heuristic
+        a = features
+        z = 0.0
+        z += (1 - float(a.get("adherence_7d", 0.0))) * 1.8
+        z += min(int(a.get("misses_48h", 0)), 3) * 0.8
+        z += min(int(a.get("snoozes_24h", 0)), 4) * 0.4
+        z += (int(a.get("dose_count_today", 0)) - 2) * 0.25
+        z += (int(a.get("complexity", 0)) - 2) * 0.15
+        if a.get("now_block") in ("evening", "night"):
+            z += 0.25
+        if int(a.get("caregiver_ack_7d", 0)) > 0:
+            z += 0.6
+        import math
+        p = 1 / (1 + math.exp(-z))
+        score = int(round(p * 100))
+        bucket = "low" if score < 35 else ("medium" if score < 65 else "high")
+        return RiskOut(
+            score_0_100=score,
+            bucket=bucket,
+            rationale="Heuristic fallback based on adherence, recent misses and snoozes.",
+            suggestion="Try an earlier reminder window and reduce snoozes.",
+            contributing_factors=["heuristic_fallback"],
+        )
+    return RiskOut(
+        score_0_100=int(result.get("score_0_100", 0)),
+        bucket=str(result.get("bucket", "low")),
+        rationale=str(result.get("rationale", "")),
+        suggestion=str(result.get("suggestion", "")),
+        contributing_factors=list(result.get("contributing_factors", []) or []),
+    )
+
+
+@app.get("/api/v1/risk/insights", response_model=RiskInsights)
+async def risk_insights(claims: dict = Depends(verify_jwt)):
+    user_id = await get_or_create_user(claims)
+    features = await _compute_features_for_user_today(user_id)
+
+    # Build 7-day adherence series
+    now = datetime.utcnow()
+    start7 = now - timedelta(days=6)
+    try:
+        res7 = (
+            supabase
+            .table("doses")
+            .select("id, scheduled_at, status")
+            .eq("user_id", user_id)
+            .gte("scheduled_at", start7.isoformat())
+            .execute()
+        )
+        rows7 = res7.data or []
+    except Exception:
+        rows7 = []
+
+    series = []
+    for i in range(6, -1, -1):
+        day = datetime(now.year, now.month, now.day) - timedelta(days=i)
+        d0 = day
+        d1 = day + timedelta(hours=23, minutes=59, seconds=59)
+        day_rows = [r for r in rows7 if (r.get("scheduled_at") or "") >= d0.isoformat() and (r.get("scheduled_at") or "") <= d1.isoformat()]
+        if day_rows:
+            taken = len([r for r in day_rows if r.get("status") == "taken"]) 
+            series.append({"date": day.strftime("%Y-%m-%d"), "adherence": int(round(100 * taken / len(day_rows)))})
+        else:
+            series.append({"date": day.strftime("%Y-%m-%d"), "adherence": 0})
+
+    # Identify top snooze windows (rough bins)
+    def _bin(ts: str) -> str:
+        try:
+            hh = int(ts[11:13])
+        except Exception:
+            return "morning"
+        if 5 <= hh < 12: return "morning"
+        if 12 <= hh < 17: return "midday"
+        if 17 <= hh < 21: return "evening"
+        return "night"
+
+    try:
+        snoozes = [r for r in rows7 if r.get("status") == "snoozed" and r.get("scheduled_at")]
+        from collections import Counter
+        bins = Counter(_bin(s.get("scheduled_at")) for s in snoozes)
+        top_snooze_windows = [b for b,_ in bins.most_common(3)]
+    except Exception:
+        top_snooze_windows = []
+        snoozes = []
+
+    # Miss counts and most-missed block (rough) for last 7 days
+    try:
+        misses = [
+            r for r in rows7
+            if r.get("status") in ("skipped", "missed") and r.get("scheduled_at")
+        ]
+        from collections import Counter
+        miss_bins = Counter(_bin(m.get("scheduled_at")) for m in misses)
+        top_miss_block = miss_bins.most_common(1)[0][0] if miss_bins else None
+        misses_7d = len(misses)
+        snoozes_7d = len(snoozes)
+    except Exception:
+        top_miss_block = None
+        misses_7d = None
+        snoozes_7d = None
+
+    context = {
+        "features": features,
+        "recent_days": series,
+        "top_snooze_windows": top_snooze_windows,
+        "summary": {
+            "has_recent_miss": features.get("misses_48h", 0) > 0,
+            "snoozes_today": features.get("snoozes_24h", 0),
+            "doses_today": features.get("dose_count_today", 0),
+            "misses_7d": misses_7d or 0,
+            "snoozes_7d": snoozes_7d or 0,
+            "top_missed_block": top_miss_block,
+        },
+    }
+
+    result = await gemini_service.build_risk_insights(context)
+    return RiskInsights(
+        title=str(result.get("title", "Adherence insights")),
+        highlights=list(result.get("highlights", []) or []),
+        advice=str(result.get("advice", "")),
+        next_best_action=str(result.get("next_best_action", "")),
+        misses_7d=misses_7d,
+        snoozes_7d=snoozes_7d,
+        top_missed_block=top_miss_block,
+    )
+
+
+
 # Helper function to get current user
 def get_current_user_id(claims: dict) -> str:
     return claims.get("sub", "")
@@ -223,6 +533,7 @@ async def get_current_user(claims: dict = Depends(verify_jwt)):
         auth0_sub=user["auth0_sub"],
         name=user["name"],
         role=user["role"],
+        phone_enc=user.get("phone_enc"),
         created_at=user["created_at"]
     )
 
@@ -234,6 +545,13 @@ async def update_current_user(update: UserUpdate, claims: dict = Depends(verify_
         update_data["name"] = update.name
     if update.role is not None:
         update_data["role"] = update.role.value
+    if update.phone_enc is not None:
+        # Accept E.164-like strings; light validation only
+        pe = str(update.phone_enc).strip()
+        if not pe:
+            update_data["phone_enc"] = None
+        else:
+            update_data["phone_enc"] = pe
     if not update_data:
         # No-op, return current
         result = supabase.table("users").select("*").eq("id", user_id).execute()
@@ -307,8 +625,9 @@ async def create_medication(
         ]
         if times_data:
             t_res = supabase.table("med_times").insert(times_data).execute()
-            if not getattr(t_res, "data", None) and getattr(t_res, "error", None):
-                raise Exception(f"Insert med_times failed: {t_res.error}")
+            # Supabase client raises on error; if no data returned, consider it a failure
+            if not getattr(t_res, "data", None):
+                raise Exception("Insert med_times failed: no data returned")
 
         return MedicationResponse(
             id=medication["id"],
@@ -572,7 +891,7 @@ async def trigger_missed_dose_alert(
         caregiver = link["caregivers"]
         if caregiver and caregiver.get("phone_enc"):
             # Send SMS alert
-            sms_sid = await twilio_service.send_missed_dose_alert(
+            sms_sid = await sns_service.send_missed_dose_alert(
                 caregiver_phone=caregiver["phone_enc"],
                 patient_name=dose["users"]["name"],
                 medication_name=dose["medications"]["name"],
@@ -583,7 +902,7 @@ async def trigger_missed_dose_alert(
             alert_data = {
                 "dose_id": dose_id,
                 "ack_by_user_id": caregiver.get("id"),
-                "meta": {"twilio_sid": sms_sid, "phone": caregiver["phone_enc"]}
+                "meta": {"sns_message_id": sms_sid, "phone": caregiver["phone_enc"]}
             }
             
             alert_result = supabase.table("alerts").insert(alert_data).execute()
@@ -651,7 +970,7 @@ async def test_sms(
     """Test SMS functionality"""
     
     # Send test message
-    sms_sid = await twilio_service.send_reminder_sms(
+    sms_sid = await sns_service.send_reminder_sms(
         patient_phone=phone,
         medication_name="Test Medication",
         time_to_take="Now"
@@ -663,5 +982,80 @@ async def test_sms(
         "phone": phone,
         "message": "Test SMS sent!" if sms_sid else "Failed to send SMS"
     }
+
+
+@app.post("/api/v1/notify/insights")
+async def send_insights_sms(claims: dict = Depends(verify_jwt)):
+    """Send a concise insights + reminders SMS to the current user using Twilio."""
+    user_id = await get_or_create_user(claims)
+    # Load user phone
+    try:
+        ures = supabase.table("users").select("phone_enc,name").eq("id", user_id).single().execute()
+        phone = (ures.data or {}).get("phone_enc")
+        name = (ures.data or {}).get("name") or "Patient"
+    except Exception:
+        phone = None
+        name = "Patient"
+    if not phone:
+        raise HTTPException(status_code=400, detail="No phone number on file")
+
+    # Pull insights and risk
+    risk = await risk_today(claims)  # reuse handler
+    insights = await risk_insights(claims)
+
+    # Build SMS body (160-300 chars preferred)
+    parts = [
+        f"PillPal: Hi {name.split(' ')[0]}, risk {risk.bucket} ({risk.score_0_100}).",
+    ]
+    if insights.highlights:
+        parts.append(insights.highlights[0][:120])
+    if insights.next_best_action:
+        parts.append(f"Try: {insights.next_best_action[:100]}")
+    body = " \n".join(parts)
+
+    sid = await sns_service.send_text(phone, body)
+    if not sid:
+        raise HTTPException(status_code=500, detail="SMS not sent. Check AWS SNS credentials and configuration.")
+    return {"success": True, "sid": sid}
+
+
+@app.get("/api/v1/export/adherence.csv")
+async def export_adherence_csv(claims: dict = Depends(verify_jwt)):
+    """Export all doses for the user as CSV: id,medication_name,scheduled_at,status,taken_at,notes"""
+    user_id = await get_or_create_user(claims)
+    try:
+        doses_res = (
+            supabase
+            .table("doses")
+            .select("id, medication_id, scheduled_at, status, taken_at, notes")
+            .eq("user_id", user_id)
+            .order("scheduled_at")
+            .execute()
+        )
+        rows = doses_res.data or []
+        med_ids = sorted({r.get("medication_id") for r in rows if r.get("medication_id")})
+        names = {}
+        if med_ids:
+            meds = supabase.table("medications").select("id,name").in_("id", med_ids).execute()
+            for m in meds.data or []:
+                names[m["id"]] = m["name"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch data: {e}")
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["id", "medication_name", "scheduled_at", "status", "taken_at", "notes"])
+    for r in rows:
+        writer.writerow([
+            r.get("id"),
+            names.get(r.get("medication_id"), "Unknown"),
+            r.get("scheduled_at"),
+            r.get("status"),
+            r.get("taken_at"),
+            (r.get("notes") or "").replace("\n", " ").strip(),
+        ])
+    buf.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=adherence.csv"}
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 

@@ -11,7 +11,7 @@ psycopg2-binary==2.9.10
 supabase==2.10.0
 scikit-learn==1.5.2
 google-generativeai==0.8.3
-twilio==9.3.1
+boto3==1.35.0
 Pillow==10.4.0
 python-multipart==0.0.12
 

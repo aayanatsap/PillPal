@@ -46,7 +46,7 @@ function ToggleSwitch({ checked, onChange, disabled = false }: ToggleSwitchProps
 }
 
 export default function SettingsPage() {
-  const [profile, setProfile] = useState<{ name: string } | null>(null)
+  const [profile, setProfile] = useState<{ name: string; phone_enc?: string | null } | null>(null)
   const [settings, setSettings] = useState({
     notifications: true,
     soundAlerts: true,
@@ -66,7 +66,7 @@ export default function SettingsPage() {
   const { toast } = useToast()
 
   useEffect(() => {
-    getUserMe().then((u) => setProfile({ name: u.name }))
+    getUserMe().then((u) => setProfile({ name: u.name, phone_enc: u.phone_enc }))
     // Check if app is already installed
     if (window.matchMedia("(display-mode: standalone)").matches) {
       setIsInstalled(true)
@@ -283,7 +283,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-heading text-lg font-semibold text-foreground">{profile?.name || "Unknown User"}</h3>
-                  <p className="text-sm text-muted-foreground">&nbsp;</p>
+                  <p className="text-sm text-muted-foreground">{profile?.phone_enc || "No phone number set"}</p>
                   <div className="flex items-center space-x-2 mt-1">
                     {isInstalled && (
                       <Badge variant="success" className="text-xs">
@@ -292,25 +292,72 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="btn-premium bg-transparent"
-                  onClick={async () => {
-                    const newName = prompt("Update your display name", profile?.name || "")
-                    if (newName && newName.trim()) {
-                      try {
-                        const u = await updateUserMe({ name: newName.trim() })
-                        setProfile({ name: u.name })
-                        window.location.reload()
-                      } catch (e: any) {
-                        alert(e?.message || "Failed to update name")
+                <div className="flex flex-col space-y-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="btn-premium bg-transparent"
+                    onClick={async () => {
+                      const newName = prompt("Update your display name", profile?.name || "")
+                      if (newName && newName.trim()) {
+                        try {
+                          const u = await updateUserMe({ name: newName.trim() })
+                          setProfile(prev => ({ ...prev!, name: u.name }))
+                          toast({
+                            title: "Profile updated",
+                            description: "Your display name has been updated",
+                          })
+                        } catch (e: any) {
+                          toast({
+                            title: "Update failed", 
+                            description: e?.message || "Failed to update name",
+                            variant: "destructive"
+                          })
+                        }
                       }
-                    }
-                  }}
-                >
-                  Edit Profile
-                </Button>
+                    }}
+                  >
+                    Edit Name
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="btn-premium bg-transparent"
+                    onClick={async () => {
+                      const newPhone = prompt("Update your phone number (E.164 format, e.g., +1234567890)", profile?.phone_enc || "")
+                      if (newPhone !== null) {
+                        const phoneToSave = newPhone.trim() === "" ? null : newPhone.trim()
+                        
+                        // Basic validation for E.164 format
+                        if (phoneToSave && !phoneToSave.match(/^\+[1-9]\d{1,14}$/)) {
+                          toast({
+                            title: "Invalid phone number",
+                            description: "Please enter a valid phone number in E.164 format (e.g., +1234567890)",
+                            variant: "destructive"
+                          })
+                          return
+                        }
+                        
+                        try {
+                          const u = await updateUserMe({ phone_enc: phoneToSave })
+                          setProfile(prev => ({ ...prev!, phone_enc: u.phone_enc }))
+                          toast({
+                            title: "Phone number updated",
+                            description: phoneToSave ? "Your phone number has been updated" : "Phone number has been removed",
+                          })
+                        } catch (e: any) {
+                          toast({
+                            title: "Update failed",
+                            description: e?.message || "Failed to update phone number",
+                            variant: "destructive"
+                          })
+                        }
+                      }
+                    }}
+                  >
+                    Edit Phone
+                  </Button>
+                </div>
               </div>
             </Card>
           </motion.div>

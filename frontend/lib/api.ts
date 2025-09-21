@@ -21,7 +21,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (!res.ok) {
     if (res.status === 401) {
       // Redirect to login on auth errors
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
         window.location.href = '/login'
       }
     }
@@ -153,4 +153,45 @@ export async function parseIntent(query: string): Promise<ApiIntentResponse> {
     method: 'POST',
     body: JSON.stringify({ query }),
   })
+}
+
+// --- Risk scoring ---
+export type RiskOut = {
+  score_0_100: number
+  bucket: 'low' | 'medium' | 'high'
+  rationale: string
+  suggestion: string
+  contributing_factors: string[]
+}
+
+export async function getRiskToday(): Promise<RiskOut> {
+  return apiFetch<RiskOut>('/api/v1/risk/today')
+}
+
+export type RiskInsights = {
+  title: string
+  highlights: string[]
+  advice: string
+  next_best_action: string
+  misses_7d?: number
+  snoozes_7d?: number
+  top_missed_block?: string | null
+}
+
+export async function getRiskInsights(): Promise<RiskInsights> {
+  return apiFetch<RiskInsights>('/api/v1/risk/insights')
+}
+
+export async function sendInsightsSms(): Promise<{ success: boolean; sid?: string | null }> {
+  return apiFetch('/api/v1/notify/insights', { method: 'POST' })
+}
+
+export function downloadAdherenceCsv(): void {
+  const url = `/api/proxy/api/v1/export/adherence.csv`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'adherence.csv'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
 }

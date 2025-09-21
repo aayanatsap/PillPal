@@ -3,13 +3,17 @@
 import { useEffect, useRef } from "react"
 import { getDosesToday, type ApiDose } from "@/lib/api"
 import { ensureNotificationPermission, playGentleChime, scheduleAt, parseIsoToLocalDate, showLocalNotification } from "@/lib/notifications"
+import { useUser } from "@auth0/nextjs-auth0"
 
 // Minimal manager: schedules notifications for today's pending doses on mount and when tab regains focus.
 export default function NotificationManager(): null {
   const cancelersRef = useRef<Array<() => void>>([])
   const hasInitRef = useRef(false)
+  const { user, isLoading } = useUser()
 
   useEffect(() => {
+    // Only run when authenticated
+    if (isLoading || !user) return
     if (hasInitRef.current) return
     hasInitRef.current = true
 
@@ -67,7 +71,7 @@ export default function NotificationManager(): null {
       cancelersRef.current.forEach((c) => c())
       cancelersRef.current = []
     }
-  }, [])
+  }, [isLoading, user])
 
   return null
 }

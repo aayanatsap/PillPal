@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { cn } from "@/lib/utils"
+import { getRiskToday, type RiskOut } from "@/lib/api"
 
 interface RiskBadgeProps {
   score: number
@@ -148,4 +149,22 @@ export function RiskBadge({ score, level, className }: RiskBadgeProps) {
       </div>
     </motion.div>
   )
+}
+
+export function RiskBadgeAuto({ className }: { className?: string }) {
+  const [risk, setRisk] = useState<RiskOut | null>(null)
+  const bucketToLevel = (b: RiskOut['bucket']): RiskBadgeProps['level'] =>
+    b === 'low' ? 'Low' : b === 'medium' ? 'Medium' : 'High'
+
+  useEffect(() => {
+    let active = true
+    getRiskToday().then((r) => {
+      if (!active) return
+      setRisk(r)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
+
+  if (!risk) return <div className={cn("glass-card p-4 h-24 animate-pulse", className)} />
+  return <RiskBadge className={className} score={risk.score_0_100} level={bucketToLevel(risk.bucket)} />
 }

@@ -79,11 +79,15 @@ Return JSON exactly in this shape:
         elif "four times" in s or "qid" in s:
             frequency_text = "Four times daily"
         elif re.search(r"every\s+\d+\s+hours", s):
-            h = int(re.search(r"every\s+(\d+)\s+hours", s).group(1))
-            frequency_text = f"Every {h} hours"
+            m = re.search(r"every\s+(\d+)\s+hours", s)
+            if m:
+                h = int(m.group(1))
+                frequency_text = f"Every {h} hours"
         elif re.search(r"q\d+h", s):
-            h = int(re.search(r"q(\d+)h", s).group(1))
-            frequency_text = f"Every {h} hours"
+            m = re.search(r"q(\d+)h", s)
+            if m:
+                h = int(m.group(1))
+                frequency_text = f"Every {h} hours"
 
         # explicit HH:MM
         times += sorted(list({m for m in re.findall(r"\b(\d{1,2}:\d{2})\b", instructions or "")}))
@@ -107,11 +111,13 @@ Return JSON exactly in this shape:
             elif frequency_text == "Four times daily":
                 times = ["06:00", "12:00", "18:00", "00:00"]
             elif frequency_text.startswith("Every"):
-                h = int(re.search(r"Every\s+(\d+)\s+hours", frequency_text).group(1))
-                cur = datetime.strptime("08:00", "%H:%M")
-                for _ in range(24 // h):
-                    times.append(cur.strftime("%H:%M"))
-                    cur += timedelta(hours=h)
+                m = re.search(r"Every\s+(\d+)\s+hours", frequency_text)
+                if m:
+                    h = int(m.group(1))
+                    cur = datetime.strptime("08:00", "%H:%M")
+                    for _ in range(max(1, 24 // max(1, h))):
+                        times.append(cur.strftime("%H:%M"))
+                        cur += timedelta(hours=h)
 
         times = sorted(list({t for t in times}))
         return {"frequency_text": frequency_text, "times": times}
@@ -154,5 +160,93 @@ Return JSON as {"medications": [...]} only.
         except Exception as e:
             return {"medications": [], "error": f"Failed to extract medication info: {str(e)}"}
 
+
+    async def score_adherence_risk(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Use Gemini to produce a 0-100 risk score with rationale and suggestion.
+        Returns a dict shaped like RiskOut.
+        """
+        instruction = (
+            "You are a careful healthcare assistant that estimates the near-term risk that a patient will "
+            "miss a scheduled medication dose within the next 24 hours.\n"
+            "Return a calibrated score from 0 to 100 (higher = higher risk), a risk bucket, a 1–2 sentence "
+            "rationale, and one actionable suggestion.\n"
+            "Use only the numeric features provided. Do not invent data. Keep output concise and machine-readable.\n"
+            "Calibration guidance:\n"
+            "- Strong adherence (adherence_7d ≥ 0.9) should rarely exceed 35 unless there are recent misses/snoozes or many doses today.\n"
+            "- Recent misses_48h ≥ 1 or snoozes_24h ≥ 2 should push risk above 45 depending on context.\n"
+            "- Evening/night windows are slightly higher risk than morning for most users.\n"
+            "- Larger dose_count_today and higher complexity increase risk.\n"
+            "- caregiver_ack_7d > 0 raises risk by 10–20 depending on recency.\n"
+            "Output only JSON with keys: score_0_100, bucket (low|medium|high), rationale, suggestion, contributing_factors."
+        )
+        payload = {"features": features}
+        try:
+            response = self.model_text.generate_content([
+                instruction,
+                {"text": json.dumps(payload)},
+            ])
+            raw = (response.text or "").strip()
+            if raw.startswith("```json") and raw.endswith("```"):
+                raw = raw[7:-3].strip()
+            data = json.loads(raw)
+            # Minimal coercion/validation
+            score = int(max(0, min(100, int(round(float(data.get("score_0_100", 0)))))))
+            bucket = str(data.get("bucket", "low")).lower()
+            if bucket not in ("low", "medium", "high"):
+                bucket = "low"
+            rationale = str(data.get("rationale", ""))
+            suggestion = str(data.get("suggestion", ""))
+            contributing = data.get("contributing_factors", []) or []
+            if not isinstance(contributing, list):
+                contributing = []
+            return {
+                "score_0_100": score,
+                "bucket": bucket,
+                "rationale": rationale,
+                "suggestion": suggestion,
+                "contributing_factors": contributing,
+            }
+        except Exception as e:
+            return {
+                "error": f"gemini_risk_failed: {e}",
+            }
+
+    async def build_risk_insights(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a concise insight card: what is being missed, frequency pattern, and tailored advice.
+        Expects context keys: features (dict), recent_days (array of {date, adherence}), top_snooze_windows (array of strings),
+        and summary strings without PHI.
+        Returns: { title, highlights: [string], advice: string, next_best_action: string }
+        """
+        instruction = (
+            "You are helping a caregiver support a patient's medication adherence. Using only the provided derived stats,\n"
+            "write a compact insight card with:\n"
+            "- title: a short headline (4-7 words)\n"
+            "- highlights: 2-4 bullet strings describing what's being missed and when (no PHI)\n"
+            "- advice: one paragraph (<= 2 sentences) with empathetic guidance\n"
+            "- next_best_action: a concrete, single next step\n"
+            "Keep it specific to the patterns in the data. No invented details. Output JSON only."
+        )
+        try:
+            response = self.model_text.generate_content([
+                instruction,
+                {"text": json.dumps(context)},
+            ])
+            raw = (response.text or "").strip()
+            if raw.startswith("```json") and raw.endswith("```"):
+                raw = raw[7:-3].strip()
+            data = json.loads(raw)
+            return {
+                "title": str(data.get("title", "Adherence insights")),
+                "highlights": list(data.get("highlights", []))[:4] if isinstance(data.get("highlights", []), list) else [],
+                "advice": str(data.get("advice", "")),
+                "next_best_action": str(data.get("next_best_action", "")),
+            }
+        except Exception:
+            return {
+                "title": "Adherence insights",
+                "highlights": ["Recent missed or snoozed doses detected"],
+                "advice": "Consider enabling earlier reminders and reducing snoozes.",
+                "next_best_action": "Enable a 15-minute earlier reminder window for evening doses",
+            }
 
 gemini_service = GeminiService()
