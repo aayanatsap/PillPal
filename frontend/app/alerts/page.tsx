@@ -13,7 +13,7 @@ import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { getDosesToday, patchDose, type ApiDose } from "@/lib/api"
+import { getDosesToday, patchDose, type ApiDose, getAlertsFeed, type ApiAlertFeedItem } from "@/lib/api"
 
 interface Alert {
   id: string
@@ -36,8 +36,32 @@ export default function AlertsPage() {
   const { toast } = useToast()
 
   useEffect(() => {
-    const load = async () => {
+    let timer: any
+    const loadOnce = async () => {
       try {
+        // Pull synthesized alerts feed from backend
+        const feed: ApiAlertFeedItem[] = await getAlertsFeed()
+        setAlerts(feed.map((f) => {
+          let mappedType: Alert['type'] = 'system'
+          if (f.type === 'missed_dose') mappedType = 'missed_dose'
+          else if (f.type === 'adherence_warning') mappedType = 'adherence_warning'
+          else if (f.type === 'dose_snoozed') mappedType = 'medication_reminder'
+          else if (f.type === 'dose_taken') mappedType = 'system'
+          else if (f.type === 'medication_added') mappedType = 'system'
+
+          return {
+            id: f.id,
+            type: mappedType,
+            title: f.title,
+            message: f.message,
+            priority: f.priority,
+            status: (f.status as any) || 'active',
+            createdAt: f.createdAt,
+            medicationName: f.medicationName,
+          }
+        }))
+
+        // Additionally compute local, imminent reminders from doses
         const doses = await getDosesToday()
         const now = new Date()
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -134,13 +158,28 @@ export default function AlertsPage() {
             ]
           : []
 
-        setAlerts([...overdueAlerts, ...upcomingAlerts, ...adherenceAlerts])
+        setAlerts((prev) => {
+          const combined = [...prev, ...overdueAlerts, ...upcomingAlerts, ...adherenceAlerts]
+          const seen = new Set<string>()
+          return combined.filter((a) => {
+            if (seen.has(a.id)) return false
+            seen.add(a.id)
+            return true
+          })
+        })
       } finally {
         setLoading(false)
       }
     }
 
-    load()
+    const startPolling = () => {
+      loadOnce()
+      timer = setInterval(loadOnce, 5000)
+    }
+    startPolling()
+    return () => {
+      if (timer) clearInterval(timer)
+    }
   }, [])
 
   const handleAcknowledge = async (alertId: string) => {

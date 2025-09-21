@@ -195,3 +195,19 @@ export function downloadAdherenceCsv(): void {
   a.click()
   document.body.removeChild(a)
 }
+
+// Alerts feed (synthetic events from backend)
+export type ApiAlertFeedItem = {
+  id: string
+  type: string
+  title: string
+  message: string
+  priority: 'low' | 'medium' | 'high'
+  status: 'active' | 'acknowledged' | 'resolved'
+  createdAt: string
+  medicationName?: string
+}
+
+export async function getAlertsFeed(): Promise<ApiAlertFeedItem[]> {
+  return apiFetch<ApiAlertFeedItem[]>('/api/v1/alerts/feed')
+}

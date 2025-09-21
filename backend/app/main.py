@@ -359,6 +359,167 @@ async def _compute_features_for_user_today(user_id: str) -> Dict[str, Any]:
     }
 
 
+# ---------- Alerts feed (synthetic, event-style) ----------
+
+class AlertFeedItem(BaseModel):
+    id: str
+    type: str
+    title: str
+    message: str
+    priority: str
+    status: str = "active"
+    createdAt: str
+    medicationName: Optional[str] = None
+
+
+@app.get("/api/v1/alerts/feed", response_model=List[AlertFeedItem])
+async def alerts_feed(claims: dict = Depends(verify_jwt)):
+    """Return a live alerts feed generated from real data without requiring stored alerts.
+
+    Includes:
+    - Missed/overdue doses (pending past grace period)
+    - Snoozed/taken dose events in the last 24h
+    - Newly added medications in the last 24h
+    - Adherence/risk warning if risk is high or score < 50
+    """
+    user_id = await get_or_create_user(claims)
+
+    now = datetime.utcnow()
+    start_24h = now - timedelta(hours=24)
+    grace_min = 10
+
+    items: List[AlertFeedItem] = []
+
+    # Fetch doses for last 2 days through next 60 minutes
+    try:
+        doses_res = (
+            supabase
+            .table("doses")
+            .select("id, medication_id, scheduled_at, status, taken_at")
+            .eq("user_id", user_id)
+            .gte("scheduled_at", (now - timedelta(days=2)).isoformat())
+            .lte("scheduled_at", (now + timedelta(hours=1)).isoformat())
+            .order("scheduled_at")
+            .execute()
+        )
+        doses = doses_res.data or []
+    except Exception:
+        doses = []
+
+    # Map med id -> name
+    med_names: Dict[str, str] = {}
+    try:
+        med_ids = sorted({d.get("medication_id") for d in doses if d.get("medication_id")})
+        if med_ids:
+            mres = supabase.table("medications").select("id,name,created_at").in_("id", med_ids).execute()
+            for m in mres.data or []:
+                med_names[m["id"]] = m.get("name") or "Medication"
+    except Exception:
+        pass
+
+    # Overdue pending doses (missed)
+    for d in doses:
+        try:
+            sched_iso = d.get("scheduled_at")
+            if not sched_iso:
+                continue
+            sched = datetime.fromisoformat(sched_iso.replace("Z", "+00:00")).replace(tzinfo=None)
+            mins_over = int((now - sched).total_seconds() // 60)
+            if d.get("status") == "pending" and mins_over > grace_min:
+                med = med_names.get(d.get("medication_id"), "Medication")
+                items.append(AlertFeedItem(
+                    id=d.get("id"),
+                    type="missed_dose",
+                    title="Missed Dose",
+                    message=f"{med} overdue by {mins_over} min",
+                    priority=("high" if mins_over >= 60 else ("medium" if mins_over >= 30 else "low")),
+                    createdAt=sched_iso,
+                    medicationName=med,
+                ))
+        except Exception:
+            continue
+
+    # Snoozed / Taken events within last 24h
+    for d in doses:
+        try:
+            status = d.get("status")
+            med = med_names.get(d.get("medication_id"), "Medication")
+            if status in ("snoozed", "taken"):
+                ts_iso = (d.get("taken_at") or d.get("scheduled_at"))
+                if not ts_iso:
+                    continue
+                tdt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).replace(tzinfo=None)
+                if tdt >= start_24h:
+                    if status == "snoozed":
+                        items.append(AlertFeedItem(
+                            id=f"snoozed-{d.get('id')}",
+                            type="dose_snoozed",
+                            title="Dose Snoozed",
+                            message=f"{med} was snoozed",
+                            priority="low",
+                            createdAt=ts_iso,
+                            medicationName=med,
+                        ))
+                    else:
+                        items.append(AlertFeedItem(
+                            id=f"taken-{d.get('id')}",
+                            type="dose_taken",
+                            title="Dose Taken",
+                            message=f"{med} taken on time",
+                            priority="low",
+                            createdAt=ts_iso,
+                            medicationName=med,
+                        ))
+        except Exception:
+            continue
+
+    # Newly added medications (24h)
+    try:
+        meds_new = (
+            supabase
+            .table("medications")
+            .select("id,name,created_at")
+            .eq("user_id", user_id)
+            .gte("created_at", start_24h.isoformat())
+            .execute()
+        )
+        for m in meds_new.data or []:
+            items.append(AlertFeedItem(
+                id=f"med-{m.get('id')}",
+                type="medication_added",
+                title="Medication Added",
+                message=f"Added {m.get('name')}",
+                priority="medium",
+                createdAt=m.get("created_at") or now.isoformat(),
+                medicationName=m.get("name") or "Medication",
+            ))
+    except Exception:
+        pass
+
+    # Risk/adherence warning
+    try:
+        r = await risk_today(claims)
+        if r.score_0_100 < 50 or r.bucket == "high":
+            items.append(AlertFeedItem(
+                id=f"risk-{now.strftime('%Y%m%d%H%M')}",
+                type="adherence_warning",
+                title="Adherence Risk",
+                message=f"Risk {r.bucket} ({r.score_0_100})",
+                priority=("high" if r.bucket == "high" else "medium"),
+                createdAt=now.isoformat(),
+            ))
+    except Exception:
+        pass
+
+    # Sort newest first
+    try:
+        items.sort(key=lambda x: x.createdAt, reverse=True)
+    except Exception:
+        pass
+
+    return items
+
+
 @app.get("/api/v1/risk/today", response_model=RiskOut)
 async def risk_today(claims: dict = Depends(verify_jwt)):
     user_id = await get_or_create_user(claims)
@@ -480,6 +641,20 @@ async def risk_insights(claims: dict = Depends(verify_jwt)):
             "top_missed_block": top_miss_block,
         },
     }
+
+    # Light-touch alerts context: summarize counts only to avoid overweighting
+    try:
+        recent_alerts = await alerts_feed(claims)  # reuse synthesized feed
+        from collections import Counter
+        type_counts = Counter(a.type for a in recent_alerts)
+        priority_counts = Counter(getattr(a, "priority", "low") for a in recent_alerts)
+        context["alerts_summary"] = {
+            "counts_by_type": dict(type_counts),
+            "high_priority": int(priority_counts.get("high", 0)),
+            "recent_titles": [a.title for a in recent_alerts[:5]],
+        }
+    except Exception:
+        context["alerts_summary"] = {"counts_by_type": {}, "high_priority": 0, "recent_titles": []}
 
     result = await gemini_service.build_risk_insights(context)
     return RiskInsights(
