@@ -78,7 +78,7 @@ export function TabBar() {
                 {isActive && (
                   <motion.div
                     layoutId="nav-active"
-                    className={cn("absolute bottom-0 h-0.5 w-6 rounded-full left-1/2 -translate-x-1/2", getActiveIndicatorColor())}
+                    className={cn("absolute -bottom-2 h-0.5 w-6 rounded-full left-1/2 -translate-x-1/2", getActiveIndicatorColor())}
                     transition={{ type: "spring", stiffness: 420, damping: 30 }}
                   />
                 )}
