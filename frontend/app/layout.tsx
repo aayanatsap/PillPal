@@ -2,7 +2,7 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter, Plus_Jakarta_Sans } from "next/font/google"
-import { Analytics } from "@vercel/analytics/next"
+// import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { MotionProvider } from "@/components/motion-provider"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -95,7 +95,7 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased min-h-screen">
         <ClientProviders>
-          <Suspense fallback={null}>
+          <Suspense fallback={<div>Loading...</div>}>
             <ThemeProvider>
               <MotionProvider>
                 {children}
@@ -104,7 +104,7 @@ export default function RootLayout({
             </ThemeProvider>
           </Suspense>
         </ClientProviders>
-        <Analytics />
+        {/* <Analytics /> */}
       </body>
     </html>
   )
