@@ -10,6 +10,19 @@
 **/.pytest_cache/
 **/.python-version
 
+# Environment variables
+**/.env
+**/.env.local
+**/.env.development
+**/.env.production
+**/.env.staging
+**/config.ini
+**/secrets.json
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+
 # Build/Dist/Coverage
 **/dist/
 **/build/
