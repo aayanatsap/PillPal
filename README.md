@@ -1,5 +1,7 @@
 # PillPal - AI-Powered Medication Adherence Platform
 
+**🏆 SteelHacks 2025 Winner - Best Product Design**
+
 **SteelHacks 2025 Submission**
 
 ## 👥 Team Members
