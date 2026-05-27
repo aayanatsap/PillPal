@@ -197,10 +197,12 @@ export default function CaregiverPage() {
           weeklyTrend,
           adherenceSeries: series,
           lastContact: lastTaken?.taken_at || lastTaken?.scheduled_at || new Date().toISOString(),
-          isOnline: true,
+          isOnline: navigator.onLine,
           recentActivity,
           patientPhone: user.phone_enc || null,
         })
+      } catch (e: any) {
+        toast({ title: "Failed to load data", description: e?.message || "Please try again.", variant: "destructive" })
       } finally {
         setLoading(false)
       }
@@ -210,7 +212,8 @@ export default function CaregiverPage() {
   }, [authorized])
 
   const handleAuthorize = () => {
-    if (pwd === 'Caregiver') {
+    const expected = process.env.NEXT_PUBLIC_CAREGIVER_PASSWORD || 'PillPal2025'
+    if (pwd === expected) {
       setAuthorized(true)
       try { if (typeof window !== 'undefined') window.localStorage.setItem('caregiverAuth', '1') } catch {}
     } else {

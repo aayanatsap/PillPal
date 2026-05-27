@@ -14,7 +14,7 @@ import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { getUserMe, updateUserMe } from "@/lib/api"
+import { getUserMe, updateUserMe, downloadAdherenceCsv } from "@/lib/api"
 
 interface ToggleSwitchProps {
   checked: boolean
@@ -60,6 +60,7 @@ export default function SettingsPage() {
 
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const [isInstalled, setIsInstalled] = useState(false)
+  const [lastSync] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark, toggleTheme } = useTheme()
@@ -67,8 +68,8 @@ export default function SettingsPage() {
 
   useEffect(() => {
     getUserMe().then((u) => setProfile({ name: u.name, phone_enc: u.phone_enc }))
-    // Check if app is already installed
-    if (window.matchMedia("(display-mode: standalone)").matches) {
+    // Check if app is already installed (guard required: window not available during SSR)
+    if (typeof window !== 'undefined' && window.matchMedia("(display-mode: standalone)").matches) {
       setIsInstalled(true)
     }
 
@@ -457,11 +458,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Last Sync</span>
-                  <span className="text-foreground font-medium">2 minutes ago</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Storage Used</span>
-                  <span className="text-foreground font-medium">12.4 MB</span>
+                  <span className="text-foreground font-medium">{lastSync}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">PWA Status</span>
@@ -488,10 +485,10 @@ export default function SettingsPage() {
               <Volume2 className="w-4 h-4 mr-2" />
               Test Notification Sound
             </Button>
-            <Button variant="outline" className="w-full justify-start bg-transparent btn-premium">
+            <Button variant="outline" className="w-full justify-start bg-transparent btn-premium" onClick={downloadAdherenceCsv}>
               Export Data
             </Button>
-            <Button variant="outline" className="w-full justify-start bg-transparent btn-premium">
+            <Button variant="outline" className="w-full justify-start bg-transparent btn-premium" onClick={() => window.open("mailto:support@pillpal.app")}>
               Contact Support
             </Button>
             <Button

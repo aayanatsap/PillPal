@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@auth0/nextjs-auth0";
+import { getUserMe } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, isLoading } = useUser();
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    if (!isLoading && user) {
-      router.replace("/");
-    }
-  }, [isLoading, user, router]);
+    // Check if the user already has a valid session via the custom cookie-based auth
+    getUserMe()
+      .then(() => router.replace("/"))
+      .catch(() => {}) // Not logged in — stay on this page
+      .finally(() => setChecking(false))
+  }, [router]);
+
+  if (checking) return null;
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6">
@@ -52,5 +56,3 @@ export default function LoginPage() {
     </main>
   );
 }
-
-

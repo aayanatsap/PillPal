@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Camera, Loader2, Check, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -30,7 +30,13 @@ export function PhotoUpload({ onUpload, className }: PhotoUploadProps) {
   const [uploadedImage, setUploadedImage] = useState<string | null>(null)
   const [parsedData, setParsedData] = useState<ParsedMedicationData | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const blobUrlRef = useRef<string | null>(null)
   const { prefersReducedMotion, easing, durations } = useMotion()
+
+  // Revoke blob URL on unmount to prevent memory leak
+  useEffect(() => {
+    return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current) }
+  }, [])
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -65,8 +71,10 @@ export function PhotoUpload({ onUpload, className }: PhotoUploadProps) {
 
     setIsUploading(true)
 
-    // Create image URL
+    // Create image URL and track it for cleanup
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
     const imageUrl = URL.createObjectURL(file)
+    blobUrlRef.current = imageUrl
     setUploadedImage(imageUrl)
 
     try {

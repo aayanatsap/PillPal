@@ -12,6 +12,7 @@ import { VoiceMic } from "@/components/voice-mic"
 import { PhotoUpload } from "@/components/photo-upload"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
+import { useToast } from "@/hooks/use-toast"
 import { listMedications, createMedication, deleteMedication, type ApiMedication } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -43,6 +44,7 @@ export default function MedicationsPage() {
   const [filterBy, setFilterBy] = useState<"all" | "due" | "taken">("all")
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
+  const { toast } = useToast()
 
   useEffect(() => {
     const load = async () => {
@@ -67,9 +69,10 @@ export default function MedicationsPage() {
 
   const filteredMedications = medications.filter((med) => {
     const matchesSearch = (med.name || "").toLowerCase().includes((searchQuery || "").toLowerCase())
-    if (filterBy === "all") return matchesSearch
-    // Add filter logic here based on due/taken status
-    return matchesSearch
+    if (!matchesSearch) return false
+    if (filterBy === "all") return true
+    if (filterBy === "due") return !!med.nextDose
+    return true
   })
 
   const handleExtracted = (_imageUrl: string, parsedData: any) => {
@@ -88,8 +91,8 @@ export default function MedicationsPage() {
   }
 
   const saveMedication = async () => {
+    setIsSaving(true)
     try {
-      setIsSaving(true)
       const created = await createMedication({
         name: draft.name,
         strength_text: draft.strength_text || undefined,
@@ -110,6 +113,8 @@ export default function MedicationsPage() {
       setMedications((prev) => [...prev, newMedication])
       setShowAddModal(false)
       setDraft({ name: '', strength_text: '', frequency_text: '', times: [], instructions: '' })
+    } catch (e: any) {
+      toast({ title: "Failed to add medication", description: e?.message || "Please try again.", variant: "destructive" })
     } finally {
       setIsSaving(false)
     }
@@ -194,9 +199,9 @@ export default function MedicationsPage() {
               <Card className="p-3 transition-all duration-300 ease-out">
                 <div className="text-center">
                   <p className="text-lg font-bold font-heading text-teal-400">
-                    {Math.round(
-                      medications.reduce((acc, med) => acc + (med.adherenceRate || 0), 0) / medications.length,
-                    )}
+                    {medications.length > 0
+                      ? Math.round(medications.reduce((acc, med) => acc + (med.adherenceRate || 0), 0) / medications.length)
+                      : 0}
                     %
                   </p>
                   <p className="text-xs text-muted-foreground">Adherence</p>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Calendar, Clock, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -9,56 +9,44 @@ import { Badge } from "@/components/ui/badge"
 import { DoseCard } from "@/components/dose-card"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
+import { getDosesToday, patchDose, type ApiDose } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 interface ScheduleViewProps {
   className?: string
 }
 
-interface ScheduledDose {
-  id: string
-  medicationName: string
-  dosage: string
-  scheduledTime: string
-  status: "pending" | "taken" | "skipped" | "snoozed"
-  takenAt?: string
-  date: string
+function toLocalDateKey(isoStr: string): string {
+  const d = new Date(isoStr)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
+function selectedDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
 export function ScheduleView({ className }: ScheduleViewProps) {
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<"day" | "week">("day")
+  const [doses, setDoses] = useState<ApiDose[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
 
-  // Mock schedule data
-  const scheduleData: ScheduledDose[] = [
-    {
-      id: "1",
-      medicationName: "Lisinopril",
-      dosage: "10mg",
-      scheduledTime: "08:00",
-      status: "taken",
-      takenAt: "08:05",
-      date: "2024-01-15",
-    },
-    {
-      id: "2",
-      medicationName: "Metformin",
-      dosage: "500mg",
-      scheduledTime: "12:00",
-      status: "pending",
-      date: "2024-01-15",
-    },
-    {
-      id: "3",
-      medicationName: "Atorvastatin",
-      dosage: "20mg",
-      scheduledTime: "20:00",
-      status: "pending",
-      date: "2024-01-15",
-    },
-  ]
+  const loadDoses = useCallback(async () => {
+    try {
+      const data = await getDosesToday()
+      setDoses(data || [])
+    } catch {
+      setDoses([])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDoses()
+  }, [loadDoses])
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-US", {
@@ -79,10 +67,44 @@ export function ScheduleView({ className }: ScheduleViewProps) {
     setSelectedDate(newDate)
   }
 
-  const todaysDoses = scheduleData.filter((dose) => dose.date === "2024-01-15")
-  const completedDoses = todaysDoses.filter((dose) => dose.status === "taken").length
-  const totalDoses = todaysDoses.length
-  const completionRate = Math.round((completedDoses / totalDoses) * 100)
+  const targetKey = selectedDateKey(selectedDate)
+
+  const getWeekKeys = () => {
+    const keys = new Set<string>()
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(selectedDate)
+      d.setDate(selectedDate.getDate() - selectedDate.getDay() + i)
+      keys.add(selectedDateKey(d))
+    }
+    return keys
+  }
+
+  const displayedDoses = doses.filter((d) => {
+    const key = toLocalDateKey(d.scheduled_at)
+    return viewMode === "day" ? key === targetKey : getWeekKeys().has(key)
+  })
+
+  const completedDoses = displayedDoses.filter((d) => d.status === "taken").length
+  const totalDoses = displayedDoses.length
+  const completionRate = totalDoses > 0 ? Math.round((completedDoses / totalDoses) * 100) : 0
+
+  const handleStatusChange = async (dose: ApiDose, newStatus: "pending" | "taken" | "skipped" | "snoozed") => {
+    const body: Parameters<typeof patchDose>[1] = { status: newStatus as "taken" | "skipped" | "snoozed" }
+    if (newStatus === "taken") body.taken_at = new Date().toISOString()
+    try {
+      const updated = await patchDose(dose.id, body)
+      setDoses((prev) => prev.map((d) => (d.id === dose.id ? { ...d, ...updated } : d)))
+    } catch {}
+  }
+
+  const toDoseCardFormat = (d: ApiDose) => ({
+    id: d.id,
+    medicationName: d.medication_name || "Unknown",
+    dosage: "",
+    scheduledTime: new Date(d.scheduled_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+    status: d.status,
+    takenAt: d.taken_at || undefined,
+  })
 
   return (
     <div className={cn("space-y-6", className)}>
@@ -139,7 +161,9 @@ export function ScheduleView({ className }: ScheduleViewProps) {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Calendar className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium text-foreground">Today's Progress</span>
+              <span className="text-sm font-medium text-foreground">
+                {viewMode === "day" ? "Day's Progress" : "Week's Progress"}
+              </span>
             </div>
             <Badge variant={completionRate === 100 ? "success" : completionRate >= 50 ? "default" : "destructive"}>
               {completionRate}%
@@ -188,48 +212,51 @@ export function ScheduleView({ className }: ScheduleViewProps) {
           </h3>
         </div>
 
-        <motion.div
-          className="space-y-3"
-          initial="hidden"
-          animate="visible"
-          variants={{
-            hidden: { opacity: 0 },
-            visible: {
-              opacity: 1,
-              transition: {
-                staggerChildren: prefersReducedMotion ? 0 : 0.1,
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground text-center py-8">Loading schedule...</p>
+        ) : displayedDoses.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">No doses scheduled for this period.</p>
+        ) : (
+          <motion.div
+            className="space-y-3"
+            initial="hidden"
+            animate="visible"
+            variants={{
+              hidden: { opacity: 0 },
+              visible: {
+                opacity: 1,
+                transition: {
+                  staggerChildren: prefersReducedMotion ? 0 : 0.1,
+                },
               },
-            },
-          }}
-        >
-          <AnimatePresence mode="wait">
-            {todaysDoses.map((dose, index) => (
-              <motion.div
-                key={dose.id}
-                variants={{
-                  hidden: { opacity: 0, x: -20 },
-                  visible: {
-                    opacity: 1,
-                    x: 0,
-                    transition: {
-                      duration: durations.sm / 1000,
-                      ease: easing.enter,
+            }}
+          >
+            <AnimatePresence mode="wait">
+              {displayedDoses.map((dose, index) => (
+                <motion.div
+                  key={dose.id}
+                  variants={{
+                    hidden: { opacity: 0, x: -20 },
+                    visible: {
+                      opacity: 1,
+                      x: 0,
+                      transition: {
+                        duration: durations.sm / 1000,
+                        ease: easing.enter,
+                      },
                     },
-                  },
-                }}
-              >
-                <DoseCard
-                  dose={dose}
-                  delay={index}
-                  onStatusChange={(newStatus) => {
-                    // Handle status change
-                    console.log(`Dose ${dose.id} status changed to ${newStatus}`)
                   }}
-                />
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </motion.div>
+                >
+                  <DoseCard
+                    dose={toDoseCardFormat(dose)}
+                    delay={index}
+                    onStatusChange={(newStatus) => handleStatusChange(dose, newStatus)}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        )}
       </motion.div>
     </div>
   )

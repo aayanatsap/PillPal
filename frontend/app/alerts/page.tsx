@@ -37,18 +37,21 @@ export default function AlertsPage() {
 
   useEffect(() => {
     let timer: any
+    let running = false // prevent concurrent poll calls
+
     const loadOnce = async () => {
+      if (running) return
+      running = true
       try {
         // Pull synthesized alerts feed from backend
         const feed: ApiAlertFeedItem[] = await getAlertsFeed()
-        setAlerts(feed.map((f) => {
+        const feedAlerts: Alert[] = feed.map((f) => {
           let mappedType: Alert['type'] = 'system'
           if (f.type === 'missed_dose') mappedType = 'missed_dose'
           else if (f.type === 'adherence_warning') mappedType = 'adherence_warning'
           else if (f.type === 'dose_snoozed') mappedType = 'medication_reminder'
           else if (f.type === 'dose_taken') mappedType = 'system'
           else if (f.type === 'medication_added') mappedType = 'system'
-
           return {
             id: f.id,
             type: mappedType,
@@ -59,18 +62,17 @@ export default function AlertsPage() {
             createdAt: f.createdAt,
             medicationName: f.medicationName,
           }
-        }))
+        })
 
         // Additionally compute local, imminent reminders from doses
         const doses = await getDosesToday()
         const now = new Date()
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-        const graceMinutes = 10 // default if no escalation rule configured
+        const graceMinutes = 10
 
         const toOverdueMinutes = (scheduledAtIso: string): number => {
           const scheduled = new Date(scheduledAtIso)
-          const diffMs = now.getTime() - scheduled.getTime()
-          return Math.floor(diffMs / 60000)
+          return Math.floor((now.getTime() - scheduled.getTime()) / 60000)
         }
 
         const priorityForOverdue = (mins: number): Alert["priority"] => {
@@ -79,7 +81,6 @@ export default function AlertsPage() {
           return "low"
         }
 
-        // Real data: build alerts from overdue pending doses (today only, local time)
         const startOfDay = new Date(now)
         startOfDay.setHours(0, 0, 0, 0)
         const endOfDay = new Date(now)
@@ -98,8 +99,7 @@ export default function AlertsPage() {
           .map((d: ApiDose) => {
             const mins = toOverdueMinutes(d.scheduled_at)
             const med = d.medication_name || "Medication"
-            const scheduled = new Date(d.scheduled_at)
-            const timeText = scheduled.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            const timeText = new Date(d.scheduled_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             return {
               id: d.id,
               type: "missed_dose" as const,
@@ -112,11 +112,9 @@ export default function AlertsPage() {
             }
           })
 
-        // Upcoming reminders: pending doses due within next 60 minutes
         const upcomingAlerts: Alert[] = doses
           .filter((d: ApiDose) => {
-            const s = new Date(d.scheduled_at)
-            const diffMs = s.getTime() - now.getTime()
+            const diffMs = new Date(d.scheduled_at).getTime() - now.getTime()
             const minsUntil = Math.floor(diffMs / 60000)
             return d.status === "pending" && minsUntil > 0 && minsUntil <= 60
           })
@@ -137,38 +135,44 @@ export default function AlertsPage() {
             }
           })
 
-        // Adherence concern: in last 7 days, if missed (past and not taken) ≥ 3
         const sevenDaysAgo = new Date(now)
         sevenDaysAgo.setDate(now.getDate() - 7)
         const missedInWeek = doses.filter((d) => {
           const s = new Date(d.scheduled_at)
           return s >= sevenDaysAgo && s < now && d.status !== "taken"
         }).length
+        // Stable ID so this alert is deduped correctly across poll cycles
         const adherenceAlerts: Alert[] = missedInWeek >= 3
-          ? [
-              {
-                id: `adherence-${now.getTime()}`,
-                type: "adherence_warning" as const,
-                title: "Adherence Concern",
-                message: `You have ${missedInWeek} missed/unfinished doses in the last 7 days. Consider enabling more reminders.`,
-                priority: missedInWeek >= 6 ? "high" : "medium",
-                status: "active" as const,
-                createdAt: now.toISOString(),
-              } as Alert,
-            ]
+          ? [{
+              id: "adherence-warning",
+              type: "adherence_warning" as const,
+              title: "Adherence Concern",
+              message: `You have ${missedInWeek} missed/unfinished doses in the last 7 days. Consider enabling more reminders.`,
+              priority: missedInWeek >= 6 ? "high" : "medium",
+              status: "active" as const,
+              createdAt: now.toISOString(),
+            } as Alert]
           : []
 
+        const incoming = [...feedAlerts, ...overdueAlerts, ...upcomingAlerts, ...adherenceAlerts]
+
         setAlerts((prev) => {
-          const combined = [...prev, ...overdueAlerts, ...upcomingAlerts, ...adherenceAlerts]
+          // Build a map of previously acknowledged alert IDs so we preserve that state
+          const acknowledgedIds = new Map<string, string>(
+            prev.filter((a) => a.status === "acknowledged").map((a) => [a.id, a.acknowledgedAt || ""])
+          )
           const seen = new Set<string>()
-          return combined.filter((a) => {
-            if (seen.has(a.id)) return false
-            seen.add(a.id)
-            return true
-          })
+          return incoming
+            .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true })
+            .map((a) =>
+              acknowledgedIds.has(a.id)
+                ? { ...a, status: "acknowledged" as const, acknowledgedAt: acknowledgedIds.get(a.id) }
+                : a
+            )
         })
       } finally {
         setLoading(false)
+        running = false
       }
     }
 
