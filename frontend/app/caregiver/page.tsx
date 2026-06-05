@@ -211,13 +211,18 @@ export default function CaregiverPage() {
     load()
   }, [authorized])
 
-  const handleAuthorize = () => {
-    const expected = process.env.NEXT_PUBLIC_CAREGIVER_PASSWORD || 'PillPal2025'
-    if (pwd === expected) {
+  const handleAuthorize = async () => {
+    try {
+      const res = await fetch('/api/caregiver-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd }),
+      })
+      if (!res.ok) throw new Error(res.status === 401 ? 'Incorrect password' : 'Caregiver password is not configured')
       setAuthorized(true)
       try { if (typeof window !== 'undefined') window.localStorage.setItem('caregiverAuth', '1') } catch {}
-    } else {
-      toast({ title: 'Incorrect password', description: 'Please try again.', variant: 'destructive' })
+    } catch (error: any) {
+      toast({ title: error?.message || 'Unable to authorize caregiver access', description: 'Please try again.', variant: 'destructive' })
     }
   }
   if (!authorized) {

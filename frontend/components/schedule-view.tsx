@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { DoseCard } from "@/components/dose-card"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
+import { useToast } from "@/hooks/use-toast"
 import { getDosesToday, patchDose, type ApiDose } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -32,6 +33,7 @@ export function ScheduleView({ className }: ScheduleViewProps) {
   const [isLoading, setIsLoading] = useState(true)
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
+  const { toast } = useToast()
 
   const loadDoses = useCallback(async () => {
     try {
@@ -94,7 +96,13 @@ export function ScheduleView({ className }: ScheduleViewProps) {
     try {
       const updated = await patchDose(dose.id, body)
       setDoses((prev) => prev.map((d) => (d.id === dose.id ? { ...d, ...updated } : d)))
-    } catch {}
+    } catch (error: any) {
+      toast({
+        title: "Failed to update dose",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      })
+    }
   }
 
   const toDoseCardFormat = (d: ApiDose) => ({

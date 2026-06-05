@@ -239,8 +239,12 @@ export function VoiceMic() {
       }
 
       return () => {
+        if (endFallbackTimerRef.current) {
+          window.clearTimeout(endFallbackTimerRef.current)
+          endFallbackTimerRef.current = null
+        }
         try { recognitionRef.current?.abort() } catch {}
-        window.speechSynthesis?.addEventListener && window.speechSynthesis.removeEventListener("voiceschanged", pickVoice as any)
+        try { window.speechSynthesis.removeEventListener("voiceschanged", pickVoice as any) } catch {}
       }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- only initialize once; state/toast are accessed via refs

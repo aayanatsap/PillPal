@@ -11,7 +11,13 @@ export default function NotificationManager(): null {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
 
   useEffect(() => {
-    getUserMe().then(() => setIsAuthenticated(true)).catch(() => setIsAuthenticated(false))
+    getUserMe()
+      .then(() => setIsAuthenticated(true))
+      .catch((error: any) => {
+        if (error?.status === 401 || error?.status === 403) {
+          setIsAuthenticated(false)
+        }
+      })
   }, [])
 
   useEffect(() => {

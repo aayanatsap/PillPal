@@ -28,6 +28,27 @@ interface MedicationUI {
   adherenceRate?: number
 }
 
+function formatNextDoseFromTimes(times: string[]): string | undefined {
+  const validTimes = times
+    .map((time) => time.trim())
+    .filter((time) => /^\d{1,2}:\d{2}$/.test(time))
+    .sort((a, b) => {
+      const [aHours, aMinutes] = a.split(":").map(Number)
+      const [bHours, bMinutes] = b.split(":").map(Number)
+      return aHours * 60 + aMinutes - (bHours * 60 + bMinutes)
+    })
+  if (validTimes.length === 0) return undefined
+
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const nextToday = validTimes.find((time) => {
+    const [hours, minutes] = time.split(":").map(Number)
+    return hours * 60 + minutes >= nowMinutes
+  })
+
+  return nextToday || `Tomorrow ${validTimes[0]}`
+}
+
 export default function MedicationsPage() {
   const [medications, setMedications] = useState<MedicationUI[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,6 +79,7 @@ export default function MedicationsPage() {
           times: m.times || [],
           instructions: m.instructions || undefined,
           color: "bg-teal-500",
+          nextDose: formatNextDoseFromTimes(m.times || []),
         }))
         setMedications(ui)
       } finally {
@@ -108,6 +130,7 @@ export default function MedicationsPage() {
         times: created.times || [],
         instructions: created.instructions || undefined,
         color: 'bg-teal-500',
+        nextDose: formatNextDoseFromTimes(created.times || []),
         adherenceRate: 100,
       }
       setMedications((prev) => [...prev, newMedication])
