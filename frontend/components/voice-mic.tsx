@@ -237,8 +237,17 @@ export function VoiceMic() {
 
         recognitionRef.current = recognition
       }
+
+      return () => {
+        if (endFallbackTimerRef.current) {
+          window.clearTimeout(endFallbackTimerRef.current)
+          endFallbackTimerRef.current = null
+        }
+        try { recognitionRef.current?.abort() } catch {}
+        try { window.speechSynthesis.removeEventListener("voiceschanged", pickVoice as any) } catch {}
+      }
     }
-  }, [state, toast])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- only initialize once; state/toast are accessed via refs
 
   const callParseIntent = async (query: string) => {
     // Use imported function if present; else fallback to direct fetch

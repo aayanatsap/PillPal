@@ -1,19 +1,27 @@
 "use client"
 
-import { useEffect, useRef } from "react"
-import { getDosesToday, type ApiDose } from "@/lib/api"
+import { useEffect, useRef, useState } from "react"
+import { getDosesToday, getUserMe, type ApiDose } from "@/lib/api"
 import { ensureNotificationPermission, playGentleChime, scheduleAt, parseIsoToLocalDate, showLocalNotification } from "@/lib/notifications"
-import { useUser } from "@auth0/nextjs-auth0"
 
 // Minimal manager: schedules notifications for today's pending doses on mount and when tab regains focus.
 export default function NotificationManager(): null {
   const cancelersRef = useRef<Array<() => void>>([])
   const hasInitRef = useRef(false)
-  const { user, isLoading } = useUser()
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
 
   useEffect(() => {
-    // Only run when authenticated
-    if (isLoading || !user) return
+    getUserMe()
+      .then(() => setIsAuthenticated(true))
+      .catch((error: any) => {
+        if (error?.status === 401 || error?.status === 403) {
+          setIsAuthenticated(false)
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated !== true) return
     if (hasInitRef.current) return
     hasInitRef.current = true
 
@@ -61,17 +69,17 @@ export default function NotificationManager(): null {
       if (perm !== "granted") return
       await scheduleForToday()
     }
+    const onVisibility = () => { if (!document.hidden) onFocus() }
     window.addEventListener("focus", onFocus)
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) onFocus()
-    })
+    document.addEventListener("visibilitychange", onVisibility)
 
     return () => {
       window.removeEventListener("focus", onFocus)
+      document.removeEventListener("visibilitychange", onVisibility)
       cancelersRef.current.forEach((c) => c())
       cancelersRef.current = []
     }
-  }, [isLoading, user])
+  }, [isAuthenticated])
 
   return null
 }

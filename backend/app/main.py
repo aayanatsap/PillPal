@@ -107,7 +107,7 @@ async def parse_intent(body: IntentRequest, claims: dict = Depends(verify_jwt)):
     try:
         meds = supabase.table("medications").select("id,name,strength_text,instructions").eq("user_id", user_id).execute()
         context["medications"] = meds.data or []
-        nd = supabase.rpc("exec_sql", {"sql": f"SELECT * FROM v_next_dose WHERE user_id = '{user_id}'"}).execute()
+        nd = supabase.rpc("get_next_dose_for_user", {"p_user_id": user_id}).execute()
         if nd.data:
             context["next_dose"] = nd.data[0]
     except Exception:
@@ -184,9 +184,9 @@ async def label_extract(
 
 
 @app.get("/api/v1/risk")
-async def risk_for_user(_claims: dict = Depends(verify_jwt)):
-    # TODO: compute risk via simple logistic regression
-    return {"score": 0}
+async def risk_for_user(claims: dict = Depends(verify_jwt)):
+    """Alias for /api/v1/risk/today for backwards compatibility."""
+    return await risk_today(claims)
 
 
 # ---------- Risk scoring (Gemini) ----------
@@ -732,7 +732,8 @@ async def update_current_user(update: UserUpdate, claims: dict = Depends(verify_
         result = supabase.table("users").select("*").eq("id", user_id).execute()
         user = result.data[0]
         return UserResponse(
-            id=user["id"], auth0_sub=user["auth0_sub"], name=user["name"], role=user["role"], created_at=user["created_at"]
+            id=user["id"], auth0_sub=user["auth0_sub"], name=user["name"], role=user["role"],
+            phone_enc=user.get("phone_enc"), created_at=user["created_at"]
         )
     result = supabase.table("users").update(update_data).eq("id", user_id).execute()
     user = result.data[0]
@@ -744,10 +745,8 @@ async def update_current_user(update: UserUpdate, claims: dict = Depends(verify_
 async def get_next_dose(claims: dict = Depends(verify_jwt)):
     user_id = await get_or_create_user(claims)
     
-    # Use the view created in schema
-    result = supabase.rpc("exec_sql", {
-        "sql": f"SELECT * FROM v_next_dose WHERE user_id = '{user_id}'"
-    }).execute()
+    # Use the parameterized RPC instead of raw SQL to avoid injection
+    result = supabase.rpc("get_next_dose_for_user", {"p_user_id": user_id}).execute()
     
     if result.data and len(result.data) > 0:
         dose_data = result.data[0]
@@ -1096,20 +1095,8 @@ async def get_missed_doses(claims: dict = Depends(verify_jwt)):
     """Get doses that are overdue and should trigger alerts"""
     user_id = await get_or_create_user(claims)
     
-    # Get doses that are past their scheduled time and still pending
-    missed_result = supabase.rpc("exec_sql", {
-        "sql": f"""
-        SELECT d.id, d.scheduled_at, d.status, m.name as medication_name,
-               e.grace_minutes
-        FROM doses d
-        JOIN medications m ON d.medication_id = m.id
-        LEFT JOIN escalation_rules e ON d.user_id = e.user_id
-        WHERE d.user_id = '{user_id}'
-          AND d.status = 'pending'
-          AND d.scheduled_at < NOW() - INTERVAL '1 minute' * COALESCE(e.grace_minutes, 10)
-        ORDER BY d.scheduled_at
-        """
-    }).execute()
+    # Get doses that are past their scheduled time and still pending using parameterized RPC
+    missed_result = supabase.rpc("get_overdue_doses_for_user", {"p_user_id": user_id}).execute()
     
     return {
         "missed_doses": missed_result.data if missed_result.data else [],

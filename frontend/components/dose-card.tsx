@@ -31,19 +31,11 @@ export function DoseCard({ dose, delay = 0, onStatusChange }: DoseCardProps) {
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
 
-  const handleStatusChange = async (newStatus: Dose["status"]) => {
+  const handleStatusChange = (newStatus: Dose["status"]) => {
     setIsUpdating(true)
     setShowActions(false)
-
-    try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      onStatusChange(newStatus)
-    } catch (error) {
-      console.error("Failed to update dose status:", error)
-    } finally {
-      setIsUpdating(false)
-    }
+    onStatusChange(newStatus)
+    setIsUpdating(false)
   }
 
   const getStatusConfig = () => {

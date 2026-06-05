@@ -70,6 +70,23 @@ export default function Dashboard() {
   const todaysTotal = dosesToday.length
   const completionRate = todaysTotal > 0 ? Math.round((todaysTaken / todaysTotal) * 100) : 0
 
+  // Compute consecutive-day streak from all available dose data
+  const streak = (() => {
+    let count = 0
+    const now = new Date()
+    for (let i = 0; i < 30; i++) {
+      const d = new Date(now)
+      d.setDate(now.getDate() - i)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const dayDoses = doses.filter((dose) => localDateKey(dose.scheduled_at) === key)
+      if (dayDoses.length === 0) { if (i === 0) continue; break }
+      const allTaken = dayDoses.every((dose) => dose.status === 'taken')
+      if (allTaken) count++
+      else break
+    }
+    return count
+  })()
+
   const getGreeting = () => {
     const hour = new Date().getHours()
     if (hour < 12) return "Good morning"
@@ -156,7 +173,7 @@ export default function Dashboard() {
           </motion.div>
 
           {/* Encouragement card */}
-          <EncouragementCard completionRate={completionRate} streak={5} />
+          <EncouragementCard completionRate={completionRate} streak={streak} />
 
           {/* Next dose highlight */}
           <AnimatePresence mode="wait">
@@ -269,6 +286,8 @@ export default function Dashboard() {
                         taken_at: status === 'taken' ? new Date().toISOString() : undefined,
                       }).then((updated) => {
                         setDoses((prev) => prev.map((d) => (d.id === dose.id ? { ...d, status: updated.status, taken_at: updated.taken_at || null } : d)))
+                      }).catch(() => {
+                        toast({ title: "Update failed", description: "Could not save dose status. Please try again.", variant: "destructive" })
                       })
 
                       if (newStatus === "taken") {

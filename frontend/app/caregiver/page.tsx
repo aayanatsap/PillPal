@@ -197,10 +197,12 @@ export default function CaregiverPage() {
           weeklyTrend,
           adherenceSeries: series,
           lastContact: lastTaken?.taken_at || lastTaken?.scheduled_at || new Date().toISOString(),
-          isOnline: true,
+          isOnline: navigator.onLine,
           recentActivity,
           patientPhone: user.phone_enc || null,
         })
+      } catch (e: any) {
+        toast({ title: "Failed to load data", description: e?.message || "Please try again.", variant: "destructive" })
       } finally {
         setLoading(false)
       }
@@ -209,12 +211,18 @@ export default function CaregiverPage() {
     load()
   }, [authorized])
 
-  const handleAuthorize = () => {
-    if (pwd === 'Caregiver') {
+  const handleAuthorize = async () => {
+    try {
+      const res = await fetch('/api/caregiver-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd }),
+      })
+      if (!res.ok) throw new Error(res.status === 401 ? 'Incorrect password' : 'Caregiver password is not configured')
       setAuthorized(true)
       try { if (typeof window !== 'undefined') window.localStorage.setItem('caregiverAuth', '1') } catch {}
-    } else {
-      toast({ title: 'Incorrect password', description: 'Please try again.', variant: 'destructive' })
+    } catch (error: any) {
+      toast({ title: error?.message || 'Unable to authorize caregiver access', description: 'Please try again.', variant: 'destructive' })
     }
   }
   if (!authorized) {

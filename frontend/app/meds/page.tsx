@@ -12,6 +12,7 @@ import { VoiceMic } from "@/components/voice-mic"
 import { PhotoUpload } from "@/components/photo-upload"
 import { useMotion } from "@/components/motion-provider"
 import { useTheme } from "@/hooks/use-theme"
+import { useToast } from "@/hooks/use-toast"
 import { listMedications, createMedication, deleteMedication, type ApiMedication } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -25,6 +26,27 @@ interface MedicationUI {
   color: string
   nextDose?: string
   adherenceRate?: number
+}
+
+function formatNextDoseFromTimes(times: string[]): string | undefined {
+  const validTimes = times
+    .map((time) => time.trim())
+    .filter((time) => /^\d{1,2}:\d{2}$/.test(time))
+    .sort((a, b) => {
+      const [aHours, aMinutes] = a.split(":").map(Number)
+      const [bHours, bMinutes] = b.split(":").map(Number)
+      return aHours * 60 + aMinutes - (bHours * 60 + bMinutes)
+    })
+  if (validTimes.length === 0) return undefined
+
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const nextToday = validTimes.find((time) => {
+    const [hours, minutes] = time.split(":").map(Number)
+    return hours * 60 + minutes >= nowMinutes
+  })
+
+  return nextToday || `Tomorrow ${validTimes[0]}`
 }
 
 export default function MedicationsPage() {
@@ -43,6 +65,7 @@ export default function MedicationsPage() {
   const [filterBy, setFilterBy] = useState<"all" | "due" | "taken">("all")
   const { prefersReducedMotion, easing, durations } = useMotion()
   const { isDark } = useTheme()
+  const { toast } = useToast()
 
   useEffect(() => {
     const load = async () => {
@@ -56,6 +79,7 @@ export default function MedicationsPage() {
           times: m.times || [],
           instructions: m.instructions || undefined,
           color: "bg-teal-500",
+          nextDose: formatNextDoseFromTimes(m.times || []),
         }))
         setMedications(ui)
       } finally {
@@ -67,9 +91,10 @@ export default function MedicationsPage() {
 
   const filteredMedications = medications.filter((med) => {
     const matchesSearch = (med.name || "").toLowerCase().includes((searchQuery || "").toLowerCase())
-    if (filterBy === "all") return matchesSearch
-    // Add filter logic here based on due/taken status
-    return matchesSearch
+    if (!matchesSearch) return false
+    if (filterBy === "all") return true
+    if (filterBy === "due") return !!med.nextDose
+    return true
   })
 
   const handleExtracted = (_imageUrl: string, parsedData: any) => {
@@ -88,8 +113,8 @@ export default function MedicationsPage() {
   }
 
   const saveMedication = async () => {
+    setIsSaving(true)
     try {
-      setIsSaving(true)
       const created = await createMedication({
         name: draft.name,
         strength_text: draft.strength_text || undefined,
@@ -105,11 +130,14 @@ export default function MedicationsPage() {
         times: created.times || [],
         instructions: created.instructions || undefined,
         color: 'bg-teal-500',
+        nextDose: formatNextDoseFromTimes(created.times || []),
         adherenceRate: 100,
       }
       setMedications((prev) => [...prev, newMedication])
       setShowAddModal(false)
       setDraft({ name: '', strength_text: '', frequency_text: '', times: [], instructions: '' })
+    } catch (e: any) {
+      toast({ title: "Failed to add medication", description: e?.message || "Please try again.", variant: "destructive" })
     } finally {
       setIsSaving(false)
     }
@@ -194,9 +222,9 @@ export default function MedicationsPage() {
               <Card className="p-3 transition-all duration-300 ease-out">
                 <div className="text-center">
                   <p className="text-lg font-bold font-heading text-teal-400">
-                    {Math.round(
-                      medications.reduce((acc, med) => acc + (med.adherenceRate || 0), 0) / medications.length,
-                    )}
+                    {medications.length > 0
+                      ? Math.round(medications.reduce((acc, med) => acc + (med.adherenceRate || 0), 0) / medications.length)
+                      : 0}
                     %
                   </p>
                   <p className="text-xs text-muted-foreground">Adherence</p>

@@ -11,7 +11,7 @@ import { MotionCard } from "@/components/ui/motion-card"
 import { MotionButton } from "@/components/ui/motion-button"
 import { Navigation } from "@/components/navigation"
 import { PhotoUpload } from "@/components/photo-upload"
-import { createMedication, extractLabel } from "@/lib/api"
+import { createMedication } from "@/lib/api"
 import { useMotion } from "@/components/motion-provider"
 import { useToast } from "@/hooks/use-toast"
 
@@ -38,7 +38,6 @@ export default function NewMedicationPage() {
       await createMedication({
         name: formData.name,
         strength_text: formData.dosage,
-        dose_text: '',
         instructions: formData.instructions || undefined,
         frequency_text: formData.frequency || undefined,
         times,
